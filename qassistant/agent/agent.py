@@ -47,6 +47,7 @@ class Agent(BaseAgent):
         
         await self._client.start()
         self._session = await self._client.create_session(**self._config)
+        self._session.on(self._on_event)
 
     async def stop(self):
         """
@@ -93,3 +94,9 @@ class Agent(BaseAgent):
         Stop running the agent
         """
         await self.stop()
+
+    def _on_event(self, event: copilot.SessionEvent):
+        """
+        Handle session events such as tool invocations or permission requests.
+        """
+        print('Received event:', event)

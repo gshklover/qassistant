@@ -1,0 +1,13 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run qassistant",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "qassistant",
+            "args": ["run"],
+            "console": "integratedTerminal"
+        }
+    ]
+}

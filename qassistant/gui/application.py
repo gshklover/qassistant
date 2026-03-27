@@ -68,8 +68,8 @@ class MainWindow(QMainWindow):
     """
     Main window for qassistant GUI. This is a placeholder for the actual UI.
     """
-    def __init__(self):
-        super().__init__()
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         self.setWindowTitle("qassistant")
         self._tabs = QTabWidget()
         self._tabs.setTabsClosable(True)
@@ -79,7 +79,7 @@ class MainWindow(QMainWindow):
         # "+" button pinned to the right side of the tab bar
         self._add_tab_btn = QPushButton(qtawesome.icon("mdi6.plus"), "", self._tabs)
         self._add_tab_btn.setFlat(True)
-        # self._add_tab_btn.setFixedSize(28, 28)
+        self._add_tab_btn.setStyleSheet("QPushButton { padding: 2px; }")
         self._add_tab_btn.setToolTip("New session")
         self._add_tab_btn.clicked.connect(self.addSessionTab)
         self._tabs.setCornerWidget(self._add_tab_btn)
@@ -100,7 +100,7 @@ class MainWindow(QMainWindow):
         """
         n = self._tabs.count() + 1
         chat_widget = SessionWidget(parent=self._tabs)
-        self._tabs.addTab(chat_widget, qtawesome.icon('mdi6.application-outline'), f"Session {n}")
+        self._tabs.addTab(chat_widget, qtawesome.icon('mdi6.comment-multiple-outline'), f"Session {n}")
         self._tabs.setCurrentWidget(chat_widget)
         return chat_widget
 
@@ -119,9 +119,9 @@ class Application(QApplication):
         super().__init__([])        
 
         self.setApplicationName("qassistant")
-        self.setWindowIcon(qtawesome.icon("mdi6.robot"))
+        self.setWindowIcon(qtawesome.icon("mdi6.comment-multiple-outline"))
 
-        self.main_window = MainWindow()
+        self.main_window = MainWindow(windowIcon=self.windowIcon())
         self.main_window.resize(800, 600)
         self.main_window.addSessionTab()
         self.main_window.show()

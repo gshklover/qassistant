@@ -337,6 +337,13 @@ _ROLE_STYLES = {
 _ROLE_STYLE_DEFAULT = "background-color: #444444; border-radius: 10px;"
 
 
+_ROLE_ICONS = {
+    "user": "mdi6.face-man-outline",
+    "assistant": "mdi6.robot-outline",
+}
+_ROLE_ICON_SIZE = 28
+
+
 class ChatMessageView(QWidget):
     """
     Widget to render a single chat message composed of multiple content parts.
@@ -346,23 +353,44 @@ class ChatMessageView(QWidget):
     def __init__(self, parent: QWidget | None = None, message: Message = None) -> None:
         super().__init__(parent)
         self._role: str | None = None
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        # Enable stylesheet-based background painting on a QWidget
-        self.setAttribute(Qt.WA_StyledBackground, True)
+
+        # Content column: holds all content views and the spinner
+        self._content_widget = QWidget()
+        self._content_widget.setAttribute(Qt.WA_StyledBackground, True)
+        self._content_layout = QVBoxLayout(self._content_widget)
+        self._content_layout.setContentsMargins(10, 8, 10, 8)
+        self._content_layout.setSpacing(4)
 
         # Spinner shown while the message is incomplete (streaming)
-        self._spinner = Spinner(parent=self, size=24)
-        layout.addWidget(self._spinner, alignment=Qt.AlignLeft)
+        self._spinner = Spinner(parent=self._content_widget, size=24)
+        self._content_layout.addWidget(self._spinner, alignment=Qt.AlignLeft)
         self._spinner.hide()
+
+        # Role icon on the right
+        self._icon_label = QLabel()
+        self._icon_label.setFixedSize(_ROLE_ICON_SIZE, _ROLE_ICON_SIZE)
+        self._icon_label.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+
+        # Outer layout: content + icon side by side
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 2, 0, 2)
+        outer.setSpacing(6)
+        outer.addWidget(self._icon_label, 0, Qt.AlignTop)
+        outer.addWidget(self._content_widget, 1)
 
         if message:
             self.updateContent(message)
 
     def _applyRoleStyle(self, role: str) -> None:
         style = _ROLE_STYLES.get(role, _ROLE_STYLE_DEFAULT)
-        self.setStyleSheet(f"ChatMessageView {{ {style} }}")
+        self._content_widget.setStyleSheet(f"QWidget {{ {style} }}")
+        icon_name = _ROLE_ICONS.get(role)
+        if icon_name:
+            pix = qtawesome.icon(icon_name).pixmap(_ROLE_ICON_SIZE, _ROLE_ICON_SIZE)
+            self._icon_label.setPixmap(pix)
+        else:
+            self._icon_label.clear()
 
     def role(self) -> str | None:
         return self._role
@@ -374,7 +402,7 @@ class ChatMessageView(QWidget):
         self._role = message.role
         self._applyRoleStyle(message.role)
 
-        layout = self.layout()
+        layout = self._content_layout
         # clear existing widgets except the spinner
         for i in reversed(range(layout.count())):
             w = layout.itemAt(i).widget()
@@ -404,7 +432,7 @@ class ChatMessageView(QWidget):
         if view:
             view.updateContent(content)
             # Insert before the spinner so it stays at the bottom
-            self.layout().insertWidget(self.layout().indexOf(self._spinner), view)
+            self._content_layout.insertWidget(self._content_layout.indexOf(self._spinner), view)
 
 
 class ChatHistoryView(QScrollArea):
@@ -515,7 +543,7 @@ class EditBox(QWidget):
         self._send_btn = QPushButton(parent=self, enabled=False, clicked=self._onSendRequested)
         self._send_btn.setFlat(True)
         self._send_btn.setIconSize(QSize(48, 48))
-        self._send_btn.setIcon(qtawesome.icon("mdi6.send", active="mdi6.send", color="#808080", disabled="mdi6.robot"))
+        self._send_btn.setIcon(qtawesome.icon("mdi6.send", active="mdi6.send", color="#808080", disabled="mdi6.comment-multiple-outline"))
 
         # Layout the edit and the button next to each other
         layout = QGridLayout(self)
