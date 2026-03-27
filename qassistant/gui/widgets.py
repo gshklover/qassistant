@@ -1,7 +1,6 @@
 """
 QAssistant GUI widgets: content views, chat history and chat widget.
 """
-import math
 from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtGui import QPixmap, QFont, QFontMetrics, QPainter, QConicalGradient, QColor, QPen
 from PySide6.QtWidgets import (
@@ -149,6 +148,7 @@ class TextContentView(QLabel, ContentView):
     def __init__(self, content: TextContent = None, parent: QWidget | None = None) -> None:
         super().__init__(parent=parent)
         self.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.setWordWrap(True)
         if content:
             self.updateContent(content)
 
@@ -414,7 +414,9 @@ class ChatHistoryView(QScrollArea):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         container = QWidget()
+        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._container_layout = QVBoxLayout(container)
         self._container_layout.setAlignment(Qt.AlignTop)
         container.setLayout(self._container_layout)
