@@ -16,3 +16,14 @@
   """
   This is a function docstring.
   """
+
+* Use ~/.copilot/memory directory to access long-term, cross-session memory files.
+  Files are yaml files, organized by category. For example: ~/.copilot/memory/environment.yaml with items describing specific facts/knowledge.
+  The following categories are recommended:
+    - environement: facts about the user machine (OS, software, common tools, etc)
+    - preferences: user preferences (editor, coding style, etc)
+  Example:
+    - id: os-001
+       category: os
+      content: Operating system is Fedora Linux
+      timestamp: 2024-06-01T12:00:00Z

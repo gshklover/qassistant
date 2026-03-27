@@ -100,5 +100,8 @@ class Agent(BaseAgent):
         Handle session events such as tool invocations or permission requests.
         Majority of the event are streaming events with very little data.
         """
+        if event.type.value in ('assistant.streaming_delta', 'assistant.message_delta', 'assistant.reasoning_delta'):
+            return
+        
         data = {k: v for k, v in event.data.to_dict().items() if v is not None}
         print(f'\n{event.type.value} ({event.id}, parent={event.parent_id}): {data}')

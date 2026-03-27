@@ -473,10 +473,17 @@ class ChatHistoryView(QScrollArea):
         self._menu_btn = QToolButton(self)
         self._menu_btn.setIcon(qtawesome.icon("mdi6.menu"))
         self._menu_btn.setAutoRaise(True)
-        self._menu_btn.setFixedSize(28, 28)
-        self._menu_btn.setToolTip("Options")
-        self._menu_btn.clicked.connect(self._showMenu)
+        self._menu_btn.setFixedSize(48, 48)
+        self._menu_btn.setToolTip("Options...")
+        self._menu_btn.setPopupMode(QToolButton.InstantPopup)
+        self._menu_btn.setStyleSheet("QToolButton::menu-indicator { image: none; }")
         self._menu_btn.raise_()
+
+        # Build the menu and attach it to the button
+        menu = QMenu(self._menu_btn)
+        reset_action = menu.addAction(qtawesome.icon("mdi6.refresh"), "Reset")
+        reset_action.triggered.connect(self.resetRequested.emit)
+        self._menu_btn.setMenu(menu)
 
         # Opacity effect: 20% visible at rest, 100% on hover
         self._opacity_effect = QGraphicsOpacityEffect(self._menu_btn)
@@ -516,12 +523,6 @@ class ChatHistoryView(QScrollArea):
         self._opacity_anim.setStartValue(self._opacity_effect.opacity())
         self._opacity_anim.setEndValue(target_opacity)
         self._opacity_anim.start()
-
-    def _showMenu(self) -> None:
-        menu = QMenu(self)
-        reset_action = menu.addAction(qtawesome.icon("mdi6.refresh"), "Reset")
-        reset_action.triggered.connect(self.resetRequested.emit)
-        menu.exec(self._menu_btn.mapToGlobal(self._menu_btn.rect().bottomLeft()))
 
     def appendMessage(self, message_view: ChatMessageView) -> None:
         """
@@ -566,7 +567,7 @@ class ChatHistoryView(QScrollArea):
 
 class _SendTextEdit(QTextEdit):
     """
-    Internal QTextEdit subclass that emits `submitted` on Enter and inserts a newline on Ctrl+Enter.
+    Internal QTextEdit subclass that emits `submitted` on Enter and inserts a newline on Ctrl/Shift+Enter.
     """
 
     submitted = Signal()
@@ -579,7 +580,7 @@ class _SendTextEdit(QTextEdit):
         Intercept Enter key presses to emit `submitted` or insert a newline.
         """
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
-            if event.modifiers() & Qt.ControlModifier:
+            if event.modifiers() & Qt.ControlModifier or event.modifiers() & Qt.ShiftModifier:
                 # Ctrl+Enter → insert a literal newline
                 self.insertPlainText("\n")
             else:

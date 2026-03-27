@@ -9,6 +9,35 @@ import pandas
 from typing import Any
 
 
+class AyncSignal:
+    """
+    Basic async signal implementation for event handling and change notification.
+    """
+    __slots__ = ['_subscribers']
+
+    def __init__(self):
+        self._subscribers = []
+
+    def connect(self, callback: Callable):
+        """
+        Connect a new subscriber callback to the signal.
+        """
+        self._subscribers.append(callback)
+
+    def disconnect(self, callback: Callable):
+        """
+        Disconnect a subscriber callback from the signal.
+        """
+        self._subscribers.remove(callback)
+
+    async def emit(self, *args, **kwargs):
+        """
+        Emit the signal and call all subscriber callbacks with the provided arguments.
+        """
+        for callback in self._subscribers:
+            await callback(*args, **kwargs)
+
+
 class BaseAgent(ABC):
     """
     Abstract base class describing the public agent interface.

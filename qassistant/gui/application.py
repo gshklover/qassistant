@@ -119,6 +119,8 @@ class Application(QApplication):
         super().__init__([])        
 
         self.setApplicationName("qassistant")
+        self.setApplicationVersion("0.0.1")
+        self.setOrganizationName("qassistant")
         self.setWindowIcon(qtawesome.icon("mdi6.comment-multiple-outline"))
 
         self.main_window = MainWindow(windowIcon=self.windowIcon())
