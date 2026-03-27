@@ -1,7 +1,7 @@
 """
 QAssistant GUI widgets: content views, chat history and chat widget.
 """
-from PySide6.QtCore import Qt, Signal, QSize, QTimer
+from PySide6.QtCore import Qt, Signal, QSize, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QPixmap, QFont, QFontMetrics, QPainter, QConicalGradient, QColor, QPen
 from PySide6.QtWidgets import (
     QWidget,
@@ -17,6 +17,9 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QSpacerItem,
+    QMenu,
+    QToolButton,
+    QGraphicsOpacityEffect,
 )
 import qtawesome
 from typing import Callable, Any
@@ -352,7 +355,6 @@ class ChatMessageView(QWidget):
 
     def __init__(self, parent: QWidget | None = None, message: Message = None) -> None:
         super().__init__(parent)
-        self._role: str | None = None
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         # Content column: holds all content views and the spinner
@@ -379,10 +381,27 @@ class ChatMessageView(QWidget):
         outer.addWidget(self._icon_label, 0, Qt.AlignTop)
         outer.addWidget(self._content_widget, 1)
 
+        self._message = message
         if message:
             self.updateContent(message)
 
+    @property
+    def message(self) -> Message | None:
+        """
+        Return the Message object associated with this view, if any.
+        """
+        return self._message
+
+    def role(self) -> str | None:
+        """
+        Return message role
+        """
+        return self._message.role if self._message else None
+
     def _applyRoleStyle(self, role: str) -> None:
+        """
+        Apply background color and icon based on the message role.
+        """
         style = _ROLE_STYLES.get(role, _ROLE_STYLE_DEFAULT)
         self._content_widget.setStyleSheet(f"QWidget {{ {style} }}")
         icon_name = _ROLE_ICONS.get(role)
@@ -392,14 +411,10 @@ class ChatMessageView(QWidget):
         else:
             self._icon_label.clear()
 
-    def role(self) -> str | None:
-        return self._role
-
     def updateContent(self, message: Message) -> None:
         """
         Replace current contents with the content parts of the given message.
         """
-        self._role = message.role
         self._applyRoleStyle(message.role)
 
         layout = self._content_layout
@@ -437,8 +452,11 @@ class ChatMessageView(QWidget):
 
 class ChatHistoryView(QScrollArea):
     """
-    Scrollable list of chat messages.
+    Scrollable list of chat messages with a floating menu button in the top-right corner.
     """
+
+    resetRequested = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWidgetResizable(True)
@@ -450,6 +468,60 @@ class ChatHistoryView(QScrollArea):
         container.setLayout(self._container_layout)
         self.setWidget(container)
         self._auto_scroll = True
+
+        # Floating menu button overlaid on the top-right corner
+        self._menu_btn = QToolButton(self)
+        self._menu_btn.setIcon(qtawesome.icon("mdi6.menu"))
+        self._menu_btn.setAutoRaise(True)
+        self._menu_btn.setFixedSize(28, 28)
+        self._menu_btn.setToolTip("Options")
+        self._menu_btn.clicked.connect(self._showMenu)
+        self._menu_btn.raise_()
+
+        # Opacity effect: 20% visible at rest, 100% on hover
+        self._opacity_effect = QGraphicsOpacityEffect(self._menu_btn)
+        self._opacity_effect.setOpacity(0.2)
+        self._menu_btn.setGraphicsEffect(self._opacity_effect)
+
+        self._opacity_anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
+        self._opacity_anim.setDuration(150)
+        self._opacity_anim.setEasingCurve(QEasingCurve.InOutQuad)
+
+        self.setMouseTracking(True)
+
+    def resizeEvent(self, event) -> None:  # pragma: no cover - UI
+        """
+        Keep the floating button pinned to the top-right on resize.
+        """
+        super().resizeEvent(event)
+        margin = 6
+        self._menu_btn.move(self.width() - self._menu_btn.width() - margin, margin)
+
+    def enterEvent(self, event) -> None:  # pragma: no cover - UI
+        """
+        Fade the menu button to full opacity when the mouse enters the widget.
+        """
+        self._fadeButton(1.0)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # pragma: no cover - UI
+        """
+        Fade the menu button back to 20% opacity when the mouse leaves the widget.
+        """
+        self._fadeButton(0.2)
+        super().leaveEvent(event)
+
+    def _fadeButton(self, target_opacity: float) -> None:
+        self._opacity_anim.stop()
+        self._opacity_anim.setStartValue(self._opacity_effect.opacity())
+        self._opacity_anim.setEndValue(target_opacity)
+        self._opacity_anim.start()
+
+    def _showMenu(self) -> None:
+        menu = QMenu(self)
+        reset_action = menu.addAction(qtawesome.icon("mdi6.refresh"), "Reset")
+        reset_action.triggered.connect(self.resetRequested.emit)
+        menu.exec(self._menu_btn.mapToGlobal(self._menu_btn.rect().bottomLeft()))
 
     def appendMessage(self, message_view: ChatMessageView) -> None:
         """
@@ -596,6 +668,7 @@ class ChatWidget(QWidget):
     def __init__(self, parent: QWidget | None = None, sendRequested: Callable[[str], None] = None) -> None:
         super().__init__(parent)
         self._messageHistory = ChatHistoryView()
+        self._messageHistory.resetRequested.connect(self._messageHistory.clear)
         self._editBox = EditBox(sendRequested=self._onSendRequested)
         
         layout = QGridLayout(self)        
@@ -620,7 +693,7 @@ class ChatWidget(QWidget):
         Useful for streaming updates.
         """
         for view in self._messageHistory.findChildren(ChatMessageView):
-            if view.role() == message.role:
+            if view.role() == message.role and view.message is message:
                 view.updateContent(message)
 
     def _onSendRequested(self, text: str) -> None:
