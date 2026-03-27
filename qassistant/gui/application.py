@@ -2,6 +2,7 @@
 Application entry for qassistant GUI.
 """
 import asyncio
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QGridLayout, QMainWindow, QTabWidget, QWidget, QPushButton
 import PySide6.QtAsyncio as QtAsyncio
 import qtawesome
@@ -119,11 +120,11 @@ class Application(QApplication):
         super().__init__([])        
 
         self.setApplicationName("qassistant")
+        self.setDesktopFileName("qassistant")  # TODO: need to create a .desktop file with an icon path for this to work properly
         self.setApplicationVersion("0.0.1")
-        self.setOrganizationName("qassistant")
         self.setWindowIcon(qtawesome.icon("mdi6.comment-multiple-outline"))
 
-        self.main_window = MainWindow(windowIcon=self.windowIcon())
+        self.main_window = MainWindow()
         self.main_window.resize(800, 600)
         self.main_window.addSessionTab()
         self.main_window.show()
