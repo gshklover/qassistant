@@ -1,0 +1,14 @@
+[project]
+name = "qassistant"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "click>=8.3.1",
+    "github-copilot-sdk>=0.1.32",
+    "ipython>=9.11.0",
+    "pandas>=3.0.1",
+    "pyside6>=6.10.2",
+    "qtawesome>=1.4.1",
+]
