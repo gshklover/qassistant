@@ -237,7 +237,7 @@ class Content:
     """
     Base content unit for a rich message.
     """
-    pass
+    metadata: dict[str, Any] = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -245,7 +245,7 @@ class TextContent(Content):
     """
     Simple text content unit.
     """
-    text: str
+    text: str = ''
     format: str = "plain"  # e.g. "plain", "markdown", "html"
 
 
@@ -254,7 +254,7 @@ class CodeContent(Content):
     """
     Code snippet content unit.
     """
-    code: str
+    code: str = ''
     language: str | None = None  # optional language hint for syntax highlighting
 
 
@@ -263,7 +263,7 @@ class ImageContent(Content):
     """
     Image content unit.
     """
-    image_data: bytes  # raw image data
+    image_data: bytes = dataclasses.field(default_factory=bytes)  # raw image data
     format: str = "png"  # e.g. "png", "jpeg"
     alt_text: str | None = None  # optional alt text for accessibility
 
@@ -273,7 +273,7 @@ class TableContent(Content):
     """
     Table content unit for structured data.
     """
-    table: pandas.DataFrame
+    table: pandas.DataFrame = None
 
 
 @dataclasses.dataclass(slots=True)
@@ -290,7 +290,7 @@ class ProgressContent(Content):
     """
     Progress update content unit for streaming responses.
     """
-    progress: float  # value between 0.0 and 1.0 indicating completion percentage
+    progress: float = 0.0# value between 0.0 and 1.0 indicating completion percentage
     message: str | None = None  # optional message describing the current progress
 
 
