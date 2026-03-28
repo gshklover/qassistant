@@ -19,51 +19,107 @@ DEFAULT_TIMEOUT = 300.0  # per-turn timeout in seconds
 _EVENT_METHOD_BY_TYPE = {
     SessionEventType.TOOL_EXECUTION_START: (
         "on_tool_execution_start", {
-            'tool_name': 'toolName',
-            'arguments': 'arguments',
-            'tool_call_id': 'toolCallId'
-        }
+            "tool_name": "tool_name",
+            "arguments": "arguments",
+            "tool_call_id": "tool_call_id",
+            "interaction_id": "interaction_id",
+        },
+    ),
+    SessionEventType.TOOL_EXECUTION_PARTIAL_RESULT: (
+        "on_tool_execution_partial_result", {
+            "tool_call_id": "tool_call_id",
+            "partial_output": "partial_output",
+        },
+    ),
+    SessionEventType.TOOL_EXECUTION_PROGRESS: (
+        "on_tool_execution_progress", {
+            "tool_call_id": "tool_call_id",
+            "progress_message": "progress_message",
+        },
     ),
     SessionEventType.TOOL_EXECUTION_COMPLETE: (
         "on_tool_execution_complete", {
-            'tool_name': 'toolName',
-            'tool_call_id': 'toolCallId',
-            'success': 'success',
-            'result': 'result',
-            'interaction_id': 'interactionId',
-        }
+            "tool_call_id": "tool_call_id",
+            "success": "success",
+            "result": "result",
+            "error": "error",
+            "interaction_id": "interaction_id",
+        },
     ),
-    SessionEventType.ASSISTANT_MESSAGE: ("on_assistant_message", {
-        'content': 'content',
-        'interaction_id': 'interactionId',
-        'reasoning_text': 'reasoningText',
-        'tool_requests': 'toolRequests',
-    }),
-    SessionEventType.ASSISTANT_MESSAGE_DELTA: ("on_assistant_message_delta", {
-        'interaction_id': 'interactionId',
-    }),
-    SessionEventType.ASSISTANT_REASONING: ("on_assistant_reasoning", {
-        'interaction_id': 'interactionId',
-        'reasoning_text': 'reasoningText',
-    }),
-    SessionEventType.ASSISTANT_REASONING_DELTA: ("on_assistant_reasoning_delta", {
-        'interaction_id': 'interactionId',
-    }),
-    SessionEventType.ASSISTANT_STREAMING_DELTA: ("on_assistant_streaming_delta", {
-        'interaction_id': 'interactionId',
-    }),
-    SessionEventType.ASSISTANT_TURN_END: ("on_assistant_turn_end", {
-        'turn_id': 'turnId',
-    }),
-    SessionEventType.ASSISTANT_TURN_START: ("on_assistant_turn_start", {
-        'turn_id': 'turnId',
-        'interaction_id': 'interactionId',
-    }),
-    SessionEventType.SESSION_IDLE: ("on_session_idle", {}),
-    SessionEventType.SESSION_ERROR: ("on_session_error", {}),
-    SessionEventType.USER_MESSAGE: ("on_user_message", {
-        'interaction_id': 'interactionId'
-    }),
+    SessionEventType.ASSISTANT_MESSAGE: (
+        "on_assistant_message", {
+            "content": "content",
+            "message_id": "message_id",
+            "interaction_id": "interaction_id",
+            "reasoning_text": "reasoning_text",
+            "tool_requests": "tool_requests",
+        },
+    ),
+    SessionEventType.ASSISTANT_MESSAGE_DELTA: (
+        "on_assistant_message_delta", {
+            "delta_content": "delta_content",
+            "message_id": "message_id",
+            "interaction_id": "interaction_id",
+        },
+    ),
+    SessionEventType.ASSISTANT_REASONING: (
+        "on_assistant_reasoning", {
+            "content": "content",
+            "reasoning_id": "reasoning_id",
+            "interaction_id": "interaction_id",
+            "reasoning_text": "reasoning_text",
+        },
+    ),
+    SessionEventType.ASSISTANT_REASONING_DELTA: (
+        "on_assistant_reasoning_delta", {
+            "delta_content": "delta_content",
+            "reasoning_id": "reasoning_id",
+            "interaction_id": "interaction_id",
+        },
+    ),
+    SessionEventType.ASSISTANT_STREAMING_DELTA: (
+        "on_assistant_streaming_delta", {
+            "total_response_size_bytes": "total_response_size_bytes",
+            "interaction_id": "interaction_id",
+        },
+    ),
+    SessionEventType.ASSISTANT_TURN_END: (
+        "on_assistant_turn_end", {
+            "turn_id": "turn_id",
+        },
+    ),
+    SessionEventType.ASSISTANT_TURN_START: (
+        "on_assistant_turn_start", {
+            "turn_id": "turn_id",
+            "interaction_id": "interaction_id",
+        },
+    ),
+    SessionEventType.SESSION_IDLE: (
+        "on_session_idle", {
+            "background_tasks": "background_tasks",
+        },
+    ),
+    SessionEventType.SESSION_TASK_COMPLETE: (
+        "on_session_task_complete", {
+            "summary": "summary",
+        },
+    ),
+    SessionEventType.SESSION_ERROR: (
+        "on_session_error", {
+            "error_type": "error_type",
+            "message": "message",
+            "error": "error",
+            "status_code": "status_code",
+            "url": "url",
+        },
+    ),
+    SessionEventType.USER_MESSAGE: (
+        "on_user_message", {
+            "content": "content",
+            "interaction_id": "interaction_id",
+            "attachments": "attachments",
+        },
+    ),
 }
 
 
@@ -165,6 +221,8 @@ class Agent(BaseAgent):
         """
         event_info = _EVENT_METHOD_BY_TYPE.get(event.type, None)
         if event_info is None:
+            for event_handler in self._event_handlers:
+                await event_handler.on_unknown_event(event.type.value, event)
             return
 
         method_name, attributes = event_info
@@ -178,7 +236,7 @@ class Agent(BaseAgent):
             if handler_method is not None:
                 try:
                     await handler_method(**args)
-                except Exception as e:
+                except Exception:
                     traceback.print_exc()
 
     def _on_event(self, event: copilot.SessionEvent):

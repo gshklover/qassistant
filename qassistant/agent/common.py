@@ -5,8 +5,9 @@ Defines the BaseAgent interface used by concrete Agent implementations.
 """
 from abc import ABC, abstractmethod
 import dataclasses
-import pandas
 from typing import Any, Callable
+
+import pandas
 
 
 class AyncSignal:
@@ -43,83 +44,161 @@ class AgentEventHandler(ABC):
     Abstract base class for handling agent events such as tool calls, permission requests, and errors.
     """
 
-    async def on_tool_execution_start(self, tool_name: str, arguments: dict, tool_call_id: str):
+    async def on_tool_execution_start(
+        self,
+        tool_name: str | None,
+        arguments: Any,
+        tool_call_id: str | None,
+        interaction_id: str | None,
+    ):
         """
         Emitted when the agent starts executing a tool.
         """
-        pass
+        return
 
-    async def on_tool_execution_complete(self, tool_name: str, tool_call_id: str, success: bool, result: Any, interaction_id: str):
+    async def on_tool_execution_partial_result(
+        self,
+        tool_call_id: str | None,
+        partial_output: str | None,
+    ):
+        """
+        Emitted when a running tool produces a streaming partial result.
+        """
+        return
+
+    async def on_tool_execution_progress(
+        self,
+        tool_call_id: str | None,
+        progress_message: str | None,
+    ):
+        """
+        Emitted when a running tool reports progress.
+        """
+        return
+
+    async def on_tool_execution_complete(
+        self,
+        tool_call_id: str | None,
+        success: bool | None,
+        result: Any,
+        error: Any,
+        interaction_id: str | None,
+    ):
         """
         Emitted when the agent completes executing a tool.
         """
-        pass
+        return
 
-    async def on_assistant_message_delta(self):
+    async def on_assistant_message_delta(
+        self,
+        delta_content: str | None,
+        message_id: str | None,
+        interaction_id: str | None,
+    ):
         """
         Streaming delta for assistant message.
         """
-        pass
+        return
 
-    async def on_assistant_message(self, content: str, interaction_id: str, reasoning_text: str, tool_requests: list):
+    async def on_assistant_message(
+        self,
+        content: str | None,
+        message_id: str | None,
+        interaction_id: str | None,
+        reasoning_text: str | None,
+        tool_requests: list[Any] | None,
+    ):
         """
         Handles response from the assistant emitted at the end of the assistant turn.
         """
-        pass
+        return
 
-    async def on_assistant_reasoning_delta(self):
+    async def on_assistant_reasoning(
+        self,
+        content: str | None,
+        reasoning_id: str | None,
+        interaction_id: str | None,
+        reasoning_text: str | None,
+    ):
+        """
+        Emitted for a completed assistant reasoning block.
+        """
+        return
+
+    async def on_assistant_reasoning_delta(
+        self,
+        delta_content: str | None,
+        reasoning_id: str | None,
+        interaction_id: str | None,
+    ):
         """
         Handle `assistant.reasoning_delta`.
         """
-        pass
+        return
 
-    async def on_assistant_streaming_delta(self):
+    async def on_assistant_streaming_delta(
+        self,
+        total_response_size_bytes: float | None,
+        interaction_id: str | None,
+    ):
         """
         Handle `assistant.streaming_delta`.
         """
-        pass
+        return
 
-    async def on_assistant_turn_end(self, turn_id: str, interaction_id: str):
+    async def on_assistant_turn_end(self, turn_id: str | None):
         """
         Handle end of assistant turn.
         """
-        pass
+        return
 
-    async def on_assistant_turn_start(self, turn_id: str, interaction_id: str):
+    async def on_assistant_turn_start(self, turn_id: str | None, interaction_id: str | None):
         """
         Single interaction may contain multiple assistant reasoning & tool execution turns.
         """
-        pass
+        return
 
-    async def on_session_idle(self):
+    async def on_session_idle(self, background_tasks: Any):
         """
         Emitted when the session agent becomes idle after handling user message.
         """
-        pass
+        return
 
-    async def on_session_task_complete(self):
+    async def on_session_task_complete(self, summary: str | None):
         """
         Handle `session.task_complete`.
         """
-        pass
+        return
 
-    async def on_session_error(self):
+    async def on_session_error(
+        self,
+        error_type: str | None,
+        message: str | None,
+        error: Any,
+        status_code: int | None,
+        url: str | None,
+    ):
         """
         Handle `session.error`.
         """
-        pass
+        return
 
-    async def on_unknown_event(self):
+    async def on_unknown_event(self, event_type: str, event: Any):
         """
         Handle any event type that has no dedicated hook.
         """
-        pass
+        return
 
-    async def on_user_message(self, content: str, interaction_id: str):
+    async def on_user_message(
+        self,
+        content: str | None,
+        interaction_id: str | None,
+        attachments: list[Any] | None,
+    ):
         """
         Emitted when user sends a new message to the agent.
         """
-        pass
+        return
 
 
 class BaseAgent(ABC):
