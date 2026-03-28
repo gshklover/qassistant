@@ -38,6 +38,12 @@ class AyncSignal:
             await callback(*args, **kwargs)
 
 
+class AgentEventHandler(ABC):
+    """
+    Abstract base class for handling agent events such as tool calls, permission requests, and errors.
+    """
+
+
 class BaseAgent(ABC):
     """
     Abstract base class describing the public agent interface.

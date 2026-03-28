@@ -2,8 +2,10 @@
 Application entry for qassistant GUI.
 """
 import asyncio
+import os
+from PySide6.QtCore import QSize
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication, QGridLayout, QMainWindow, QTabWidget, QWidget, QPushButton
+from PySide6.QtWidgets import QApplication, QGridLayout, QMainWindow, QTabWidget, QWidget, QPushButton, QHBoxLayout, QMenu, QToolButton
 import PySide6.QtAsyncio as QtAsyncio
 import qtawesome
 import traceback
@@ -64,6 +66,13 @@ class SessionWidget(QWidget):
         response_message.complete = True
         self._chat_widget.updateMessage(response_message)
 
+    def reset(self) -> None:
+        """
+        Clear the chat history for this session.
+        """
+        self._chat_widget.clearHistory()
+        asyncio.create_task(self._agent.reset())  # NOTE: this is async task
+
 
 class MainWindow(QMainWindow):
     """
@@ -77,13 +86,41 @@ class MainWindow(QMainWindow):
         self._tabs.tabCloseRequested.connect(self._onTabCloseRequested)
         self.setCentralWidget(self._tabs)
 
-        # "+" button pinned to the right side of the tab bar
-        self._add_tab_btn = QPushButton(qtawesome.icon("mdi6.plus"), "", self._tabs)
+        # Corner widget: menu button + "+" button in the top-right of the tab bar
+        corner = QWidget()
+        corner_layout = QHBoxLayout(corner)
+        corner_layout.setContentsMargins(0, 0, 0, 0)
+        corner_layout.setSpacing(2)
+
+        # Context menu button
+        self._menu_btn = QToolButton(corner)
+        self._menu_btn.setIcon(qtawesome.icon("mdi6.menu"))
+        self._menu_btn.setAutoRaise(True)
+        self._menu_btn.setToolTip("Options...")
+        self._menu_btn.setPopupMode(QToolButton.InstantPopup)
+        self._menu_btn.setStyleSheet("QPushButton { padding: 2px; } QToolButton::menu-indicator { image: none; }")
+        session_menu = QMenu(self._menu_btn)
+        session_menu.addAction(qtawesome.icon("mdi6.refresh"), "Reset").triggered.connect(self._onResetSession)
+        self._menu_btn.setMenu(session_menu)
+
+        # New session button
+        self._add_tab_btn = QPushButton(qtawesome.icon("mdi6.plus"), "", corner)
         self._add_tab_btn.setFlat(True)
         self._add_tab_btn.setStyleSheet("QPushButton { padding: 2px; }")
         self._add_tab_btn.setToolTip("New session")
         self._add_tab_btn.clicked.connect(self.addSessionTab)
-        self._tabs.setCornerWidget(self._add_tab_btn)
+
+        corner_layout.addWidget(self._menu_btn)
+        corner_layout.addWidget(self._add_tab_btn)
+        self._tabs.setCornerWidget(corner)
+
+    def _onResetSession(self) -> None:
+        """
+        Reset the chat history of the currently active session tab.
+        """
+        widget = self._tabs.currentWidget()
+        if isinstance(widget, SessionWidget):
+            widget.reset()
 
     def _onTabCloseRequested(self, index: int) -> None:
         """
@@ -120,7 +157,7 @@ class Application(QApplication):
         super().__init__([])        
 
         self.setApplicationName("qassistant")
-        self.setDesktopFileName("qassistant")  # TODO: need to create a .desktop file with an icon path for this to work properly
+        self.setDesktopFileName('qassistant')
         self.setApplicationVersion("0.0.1")
         self.setWindowIcon(qtawesome.icon("mdi6.comment-multiple-outline"))
 

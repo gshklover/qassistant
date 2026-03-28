@@ -1,7 +1,7 @@
 """
 QAssistant GUI widgets: content views, chat history and chat widget.
 """
-from PySide6.QtCore import Qt, Signal, QSize, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtGui import QPixmap, QFont, QFontMetrics, QPainter, QConicalGradient, QColor, QPen
 from PySide6.QtWidgets import (
     QWidget,
@@ -17,9 +17,6 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QSpacerItem,
-    QMenu,
-    QToolButton,
-    QGraphicsOpacityEffect,
 )
 import qtawesome
 from typing import Callable, Any
@@ -452,7 +449,7 @@ class ChatMessageView(QWidget):
 
 class ChatHistoryView(QScrollArea):
     """
-    Scrollable list of chat messages with a floating menu button in the top-right corner.
+    Scrollable list of chat messages.
     """
 
     resetRequested = Signal()
@@ -469,61 +466,6 @@ class ChatHistoryView(QScrollArea):
         self.setWidget(container)
         self._auto_scroll = True
 
-        # Floating menu button overlaid on the top-right corner
-        self._menu_btn = QToolButton(self)
-        self._menu_btn.setIcon(qtawesome.icon("mdi6.menu"))
-        self._menu_btn.setAutoRaise(True)
-        self._menu_btn.setFixedSize(48, 48)
-        self._menu_btn.setToolTip("Options...")
-        self._menu_btn.setPopupMode(QToolButton.InstantPopup)
-        self._menu_btn.setStyleSheet("QToolButton::menu-indicator { image: none; }")
-        self._menu_btn.raise_()
-
-        # Build the menu and attach it to the button
-        menu = QMenu(self._menu_btn)
-        reset_action = menu.addAction(qtawesome.icon("mdi6.refresh"), "Reset")
-        reset_action.triggered.connect(self.resetRequested.emit)
-        self._menu_btn.setMenu(menu)
-
-        # Opacity effect: 20% visible at rest, 100% on hover
-        self._opacity_effect = QGraphicsOpacityEffect(self._menu_btn)
-        self._opacity_effect.setOpacity(0.2)
-        self._menu_btn.setGraphicsEffect(self._opacity_effect)
-
-        self._opacity_anim = QPropertyAnimation(self._opacity_effect, b"opacity", self)
-        self._opacity_anim.setDuration(150)
-        self._opacity_anim.setEasingCurve(QEasingCurve.InOutQuad)
-
-        self.setMouseTracking(True)
-
-    def resizeEvent(self, event) -> None:  # pragma: no cover - UI
-        """
-        Keep the floating button pinned to the top-right on resize.
-        """
-        super().resizeEvent(event)
-        margin = 6
-        self._menu_btn.move(self.width() - self._menu_btn.width() - margin, margin)
-
-    def enterEvent(self, event) -> None:  # pragma: no cover - UI
-        """
-        Fade the menu button to full opacity when the mouse enters the widget.
-        """
-        self._fadeButton(1.0)
-        super().enterEvent(event)
-
-    def leaveEvent(self, event) -> None:  # pragma: no cover - UI
-        """
-        Fade the menu button back to 20% opacity when the mouse leaves the widget.
-        """
-        self._fadeButton(0.2)
-        super().leaveEvent(event)
-
-    def _fadeButton(self, target_opacity: float) -> None:
-        self._opacity_anim.stop()
-        self._opacity_anim.setStartValue(self._opacity_effect.opacity())
-        self._opacity_anim.setEndValue(target_opacity)
-        self._opacity_anim.start()
-
     def appendMessage(self, message_view: ChatMessageView) -> None:
         """
         Add a ChatMessageView to the history, aligned by role:
@@ -532,7 +474,6 @@ class ChatHistoryView(QScrollArea):
         row = QHBoxLayout()
         row.setContentsMargins(0, 2, 0, 2)
         row.setSpacing(0)
-        # Limit bubble to 80% of available width
         message_view.setMaximumWidth(9999)  # reset any previous constraint
         spacer = QSpacerItem(0, 0, QSizePolicy.Expanding, QSizePolicy.Minimum)
         if message_view.role() == "user":
@@ -669,7 +610,6 @@ class ChatWidget(QWidget):
     def __init__(self, parent: QWidget | None = None, sendRequested: Callable[[str], None] = None) -> None:
         super().__init__(parent)
         self._messageHistory = ChatHistoryView()
-        self._messageHistory.resetRequested.connect(self._messageHistory.clear)
         self._editBox = EditBox(sendRequested=self._onSendRequested)
         
         layout = QGridLayout(self)        
@@ -703,3 +643,9 @@ class ChatWidget(QWidget):
         """
         self._editBox.clearText()
         self.sendRequested.emit(text)
+
+    def clearHistory(self) -> None:
+        """
+        Clear all messages from the chat history.
+        """
+        self._messageHistory.clear()
