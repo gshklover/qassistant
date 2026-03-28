@@ -1,34 +1,97 @@
 """
 Agent implementation. Provides a small adapter around GenAI SDK and tool execution.
 """
-import copilot
+import asyncio
+import traceback
 from typing import Callable
 
-from .common import BaseAgent
+import copilot
+from copilot.generated.session_events import SessionEventType
+
+from .common import AgentEventHandler, BaseAgent
 
 
 DEFAULT_MODEL = "gpt-5-mini"
+DEFAULT_TIMEOUT = 300.0  # per-turn timeout in seconds
+
+
+# map event type to handler name & argument mapping
+_EVENT_METHOD_BY_TYPE = {
+    SessionEventType.TOOL_EXECUTION_START: (
+        "on_tool_execution_start", {
+            'tool_name': 'toolName',
+            'arguments': 'arguments',
+            'tool_call_id': 'toolCallId'
+        }
+    ),
+    SessionEventType.TOOL_EXECUTION_COMPLETE: (
+        "on_tool_execution_complete", {
+            'tool_name': 'toolName',
+            'tool_call_id': 'toolCallId',
+            'success': 'success',
+            'result': 'result',
+            'interaction_id': 'interactionId',
+        }
+    ),
+    SessionEventType.ASSISTANT_MESSAGE: ("on_assistant_message", {
+        'content': 'content',
+        'interaction_id': 'interactionId',
+        'reasoning_text': 'reasoningText',
+        'tool_requests': 'toolRequests',
+    }),
+    SessionEventType.ASSISTANT_MESSAGE_DELTA: ("on_assistant_message_delta", {
+        'interaction_id': 'interactionId',
+    }),
+    SessionEventType.ASSISTANT_REASONING: ("on_assistant_reasoning", {
+        'interaction_id': 'interactionId',
+        'reasoning_text': 'reasoningText',
+    }),
+    SessionEventType.ASSISTANT_REASONING_DELTA: ("on_assistant_reasoning_delta", {
+        'interaction_id': 'interactionId',
+    }),
+    SessionEventType.ASSISTANT_STREAMING_DELTA: ("on_assistant_streaming_delta", {
+        'interaction_id': 'interactionId',
+    }),
+    SessionEventType.ASSISTANT_TURN_END: ("on_assistant_turn_end", {
+        'turn_id': 'turnId',
+    }),
+    SessionEventType.ASSISTANT_TURN_START: ("on_assistant_turn_start", {
+        'turn_id': 'turnId',
+        'interaction_id': 'interactionId',
+    }),
+    SessionEventType.SESSION_IDLE: ("on_session_idle", {}),
+    SessionEventType.SESSION_ERROR: ("on_session_error", {}),
+    SessionEventType.USER_MESSAGE: ("on_user_message", {
+        'interaction_id': 'interactionId'
+    }),
+}
 
 
 class Agent(BaseAgent):
     """
     Base agent class implementation using copilot SDK.
-    Wraps around a single session with start/stop/reset and tool integratio
+    Wraps around a single session with start/stop/reset and tool integration.
     """
-    
-    def __init__(self, model: str = DEFAULT_MODEL, tools: list[str | Callable] = None):
+
+    def __init__(
+        self,
+        model: str = DEFAULT_MODEL,
+        tools: list[str | Callable] | None = None,
+        event_handlers: list[AgentEventHandler] | None = None,
+    ):
         """
-        Initialize the agent with the specified model and tools.
+        Initialize the agent with the specified model, tools, and event handlers.
         """
         self._client = copilot.CopilotClient()
         self._model = model
         self._session = None
         self._tools = [copilot.define_tool()(tool) for tool in (tools or ())]
+        self._event_handlers = list(event_handlers or ())
         self._config = dict(
             on_permission_request=copilot.PermissionHandler.approve_all,
             model=model,
             tools=self._tools,
-            streaming=True
+            streaming=True,
         )
 
     @property
@@ -44,7 +107,7 @@ class Agent(BaseAgent):
         """
         if self._session is not None:
             raise RuntimeError("Agent is already running")
-        
+
         await self._client.start()
         self._session = await self._client.create_session(**self._config)
         self._session.on(self._on_event)
@@ -64,8 +127,9 @@ class Agent(BaseAgent):
         """
         if self._session:
             await self._session.disconnect()
-        
+
         self._session = await self._client.create_session(**self._config)
+        self._session.on(self._on_event)
 
     async def send(self, message: str):
         """
@@ -73,13 +137,13 @@ class Agent(BaseAgent):
         """
         if not self._session:
             raise RuntimeError("Agent is not running. Call start() first.")
-        
-        response = await self._session.send_and_wait(message)
+
+        response = await self._session.send_and_wait(message, timeout=DEFAULT_TIMEOUT)
         return response
 
     async def __aenter__(self):
         """
-        Start running the agent
+        Start running the agent.
         Example:
             ```
             async with Agent() as agent:
@@ -88,20 +152,48 @@ class Agent(BaseAgent):
         """
         await self.start()
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """
-        Stop running the agent
+        Stop running the agent.
         """
         await self.stop()
 
+    async def _handle_event(self, event: copilot.SessionEvent):
+        """
+        Route an event to all configured handlers using event-type-specific hooks.
+        """
+        event_info = _EVENT_METHOD_BY_TYPE.get(event.type, None)
+        if event_info is None:
+            return
+
+        method_name, attributes = event_info
+        args = {
+            arg_name: getattr(event.data, attr_name, None)
+            for arg_name, attr_name in attributes.items()
+        }
+
+        for event_handler in self._event_handlers:
+            handler_method = getattr(event_handler, method_name, None)
+            if handler_method is not None:
+                try:
+                    await handler_method(**args)
+                except Exception as e:
+                    traceback.print_exc()
+
     def _on_event(self, event: copilot.SessionEvent):
         """
-        Handle session events such as tool invocations or permission requests.
-        Majority of the event are streaming events with very little data.
+        Session callback that logs non-streaming events and dispatches to handlers.
         """
-        if event.type.value in ('assistant.streaming_delta', 'assistant.message_delta', 'assistant.reasoning_delta'):
+        if event.type.value not in (
+            "assistant.streaming_delta",
+            # "assistant.message_delta",
+            # "assistant.reasoning_delta",
+        ):
+            data = {k: v for k, v in event.data.to_dict().items() if v is not None}
+            print(f"\n{event.type.value} ({event.id}, parent={event.parent_id}): {data}")
+
+        if not self._event_handlers:
             return
-        
-        data = {k: v for k, v in event.data.to_dict().items() if v is not None}
-        print(f'\n{event.type.value} ({event.id}, parent={event.parent_id}): {data}')
+
+        asyncio.create_task(self._handle_event(event))

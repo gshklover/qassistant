@@ -6,7 +6,7 @@ Defines the BaseAgent interface used by concrete Agent implementations.
 from abc import ABC, abstractmethod
 import dataclasses
 import pandas
-from typing import Any
+from typing import Any, Callable
 
 
 class AyncSignal:
@@ -42,6 +42,84 @@ class AgentEventHandler(ABC):
     """
     Abstract base class for handling agent events such as tool calls, permission requests, and errors.
     """
+
+    async def on_tool_execution_start(self, tool_name: str, arguments: dict, tool_call_id: str):
+        """
+        Emitted when the agent starts executing a tool.
+        """
+        pass
+
+    async def on_tool_execution_complete(self, tool_name: str, tool_call_id: str, success: bool, result: Any, interaction_id: str):
+        """
+        Emitted when the agent completes executing a tool.
+        """
+        pass
+
+    async def on_assistant_message_delta(self):
+        """
+        Streaming delta for assistant message.
+        """
+        pass
+
+    async def on_assistant_message(self, content: str, interaction_id: str, reasoning_text: str, tool_requests: list):
+        """
+        Handles response from the assistant emitted at the end of the assistant turn.
+        """
+        pass
+
+    async def on_assistant_reasoning_delta(self):
+        """
+        Handle `assistant.reasoning_delta`.
+        """
+        pass
+
+    async def on_assistant_streaming_delta(self):
+        """
+        Handle `assistant.streaming_delta`.
+        """
+        pass
+
+    async def on_assistant_turn_end(self, turn_id: str, interaction_id: str):
+        """
+        Handle end of assistant turn.
+        """
+        pass
+
+    async def on_assistant_turn_start(self, turn_id: str, interaction_id: str):
+        """
+        Single interaction may contain multiple assistant reasoning & tool execution turns.
+        """
+        pass
+
+    async def on_session_idle(self):
+        """
+        Emitted when the session agent becomes idle after handling user message.
+        """
+        pass
+
+    async def on_session_task_complete(self):
+        """
+        Handle `session.task_complete`.
+        """
+        pass
+
+    async def on_session_error(self):
+        """
+        Handle `session.error`.
+        """
+        pass
+
+    async def on_unknown_event(self):
+        """
+        Handle any event type that has no dedicated hook.
+        """
+        pass
+
+    async def on_user_message(self, content: str, interaction_id: str):
+        """
+        Emitted when user sends a new message to the agent.
+        """
+        pass
 
 
 class BaseAgent(ABC):
