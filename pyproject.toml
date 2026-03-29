@@ -5,9 +5,11 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "bokeh>=3.9.0",
     "click>=8.3.1",
     "github-copilot-sdk>=0.1.32",
     "ipython>=9.11.0",
+    "jupyter>=1.1.1",
     "pandas>=3.0.1",
     "pyside6>=6.10.2",
     "qtawesome>=1.4.1",

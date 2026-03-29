@@ -9,6 +9,7 @@ import copilot
 from copilot.generated.session_events import SessionEventType
 
 from .common import AgentEventHandler, BaseAgent
+from .tools.pythonshell import PythonShell
 
 
 DEFAULT_MODEL = "gpt-5-mini"
@@ -140,8 +141,13 @@ class Agent(BaseAgent):
         """
         self._client = copilot.CopilotClient()
         self._model = model
+        self._shell = PythonShell()  # shared python shell instance for tool execution
         self._session = None
-        self._tools = [copilot.define_tool()(tool) for tool in (tools or ())]
+        self._tools = [
+            copilot.define_tool()(self._shell.execute),
+            copilot.define_tool()(self._shell.get_variables),
+            *[copilot.define_tool()(tool) for tool in (tools or ())],
+        ]
         self._event_handlers = list(event_handlers or ())
         self._config = dict(
             on_permission_request=copilot.PermissionHandler.approve_all,

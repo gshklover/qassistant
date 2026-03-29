@@ -5,14 +5,17 @@ Defines the BaseAgent interface used by concrete Agent implementations.
 """
 from abc import ABC, abstractmethod
 import dataclasses
-from typing import Any, Callable
-
+import traceback
 import pandas
+from typing import Any, Callable, Generic, TypeVarTuple
 
 
-class AyncSignal:
+Args = TypeVarTuple('Args')
+
+
+class Signal(Generic[*Args]):
     """
-    Basic async signal implementation for event handling and change notification.
+    Basic signal implementation for event handling and change notification.
     """
     __slots__ = ['_subscribers']
 
@@ -31,12 +34,29 @@ class AyncSignal:
         """
         self._subscribers.remove(callback)
 
-    async def emit(self, *args, **kwargs):
+    def emit(self, *args: *Args, **kwargs):
         """
         Emit the signal and call all subscriber callbacks with the provided arguments.
         """
         for callback in self._subscribers:
-            await callback(*args, **kwargs)
+            try:
+                callback(*args, **kwargs)
+            except Exception:  # noqa
+                traceback.print_exc()
+
+
+@dataclasses.dataclass(slots=True)
+class IObservable:
+    """
+    Interface for observable objects that can emit signals on state changes.
+    """
+    property_changed: Signal[str, Any] = dataclasses.field(default_factory=Signal)
+
+    def _on_property_changed(self, property_name: str, value: Any):
+        """
+        Emit a property changed signal when an observable property is updated.
+        """
+        self.property_changed.emit(property_name, value)
 
 
 class AgentEventHandler(ABC):
@@ -233,11 +253,16 @@ class BaseAgent(ABC):
 
 
 @dataclasses.dataclass(slots=True)
-class Content:
+class Content(IObservable):
     """
     Base content unit for a rich message.
     """
     metadata: dict[str, Any] = None
+
+    def __setattr__(self, name, value):
+        res = super().__setattr__(name, value)
+        self._on_property_changed(name, value)
+        return res
 
 
 @dataclasses.dataclass(slots=True)
@@ -305,7 +330,7 @@ class Role(str):
 
 
 @dataclasses.dataclass(slots=True)
-class Message:
+class Message(IObservable):
     """
     Standardized message format for agent communication.
     """
@@ -313,3 +338,10 @@ class Message:
     content: list[Content] = dataclasses.field(default_factory=list)
     metadata: dict[str, Any] = dataclasses.field(default_factory=dict)
     complete: bool = True # indicates if this message is a complete response or part of a stream
+
+    def append(self, content: Content):
+        """
+        Append new content to the message and emit a change signal.
+        """
+        self.content.append(content)
+        self._on_property_changed('content', self.content)

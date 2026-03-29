@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=QAssistant
+Comment=QAssistant - assistant application
+Exec=qassistant %U
+Icon=/home/greg/src/qassistant/qassistant.png
+Terminal=false
+Categories=Utility;Productivity;
+StartupNotify=true
