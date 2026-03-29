@@ -69,7 +69,7 @@ class TestPythonShell(unittest.TestCase):
         result = shell.execute("x = 42")
 
         self.assertTrue(result.success)
-        self.assertEqual(shell.shell.user_ns['x'], 42)
+        self.assertEqual(result.result, 42)
 
     def test_execute_extracts_dict_indexed_assignment(self):
         """
@@ -83,8 +83,8 @@ class TestPythonShell(unittest.TestCase):
         ]))
 
         self.assertTrue(result.success)
-        self.assertEqual(
-            shell.shell.user_ns['data'],
+        self.assertDictEqual(
+            result.result,
             {'key': 'value', 'number': 123, 'key2': 'another'},
         )
 

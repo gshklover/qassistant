@@ -143,6 +143,7 @@ class PythonShell:
         """
         
         with _OrderedCapture(self.shell) as captured:
+            self.shell.user_ns.pop('_', None)  # clear previous '_' value
             result = self.shell.run_cell(code)
             if '_' not in self.shell.user_ns:
                 self.shell.user_ns['_'] = self._extract_assignment(code)
@@ -184,7 +185,9 @@ class PythonShell:
         
         # take the last expression and check if the expression is an assignment:
         last_node = tree.body[-1]
-        if isinstance(last_node, ast.Assign) and isinstance(last_node.targets[0], ast.Name):
-            return self.shell.user_ns.get(last_node.targets[0].id, None)
-        else:
-            return None
+        if isinstance(last_node, ast.Assign):
+            if isinstance(last_node.targets[0], ast.Name):
+                return self.shell.user_ns.get(last_node.targets[0].id, None)
+            if isinstance(last_node.targets[0], ast.Subscript) and isinstance(last_node.targets[0].value, ast.Name):
+                return self.shell.user_ns.get(last_node.targets[0].value.id, None)
+        return None
