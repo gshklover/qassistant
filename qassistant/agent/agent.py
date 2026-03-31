@@ -2,17 +2,20 @@
 Agent implementation. Provides a small adapter around GenAI SDK and tool execution.
 """
 import asyncio
+import os
 import traceback
 from typing import Callable
 
 import copilot
 from copilot.generated.session_events import SessionEventType
+from openai import AsyncOpenAI
 
 from .common import AgentEventHandler, BaseAgent
 from .tools.pythonshell import PythonShell
 
 
 DEFAULT_MODEL = "gpt-5-mini"
+DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 DEFAULT_TIMEOUT = 300.0  # per-turn timeout in seconds
 
 
@@ -262,3 +265,36 @@ class Agent(BaseAgent):
             return
 
         asyncio.create_task(self._handle_event(event))
+
+
+class ModelsClient:
+    """
+    Wraps around github models API
+    """
+    def __init__(self, chat_model: str = DEFAULT_MODEL, embedding_model: str = DEFAULT_EMBEDDING_MODEL):
+        """
+        Initialize the client with authentication and model configuration.
+        """
+        with open(os.path.expanduser('~/.copilot.cfg')) as stream:
+            self._token = stream.read().strip()
+
+        self._client = AsyncOpenAI(
+            base_url='https://models.github.ai/inference',
+            api_key=self._token,
+        )
+        self._chat_model = f'openai/{chat_model}'
+        self._embedding_model = f'openai/{embedding_model}'
+
+    async def chat(self, messages: list[dict]) -> str:
+        """
+        Send a chat message to the model and return the response.
+        """
+        response = await self._client.chat.completions.create(messages=messages, model=self._chat_model)
+        return response.choices[0].message.content
+
+    async def embed(self, text: str) -> list[float]:
+        """
+        Get embedding for the input text.
+        """
+        response = await self._client.embeddings.create(input=text, model=self._embedding_model)
+        return response.data[0].embedding

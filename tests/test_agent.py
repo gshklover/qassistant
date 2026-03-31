@@ -2,6 +2,7 @@
 Unit tests for the Agent event handler integration.
 """
 import asyncio
+import os
 from types import SimpleNamespace
 import unittest
 from uuid import uuid4
@@ -262,6 +263,36 @@ class TestAgentEventHandlerIntegration(unittest.IsolatedAsyncioTestCase):
         #     0,
         #     "Expected at least one reasoning event while streaming the response.",
         # )
+
+
+class TestModelsClient(unittest.IsolatedAsyncioTestCase):
+    """
+    Validate ModelsClient chat and embed methods against the live GitHub Models API.
+    """
+
+    async def test_chat_returns_answer_to_arithmetic(self):
+        """
+        Test that chat() returns a response containing the correct answer to a simple arithmetic question.
+        """
+        from qassistant.agent.agent import ModelsClient
+        client = ModelsClient()
+
+        result = await client.chat([{'role': 'user', 'content': 'What is 2+2? Reply with just the number.'}])
+
+        self.assertIn('4', result)
+
+    async def test_embed_returns_vector(self):
+        """
+        Test that embed() returns a non-empty list of floats.
+        """
+        from qassistant.agent.agent import ModelsClient
+        client = ModelsClient()
+
+        result = await client.embed('hello world')
+
+        self.assertIsInstance(result, list)
+        self.assertGreater(len(result), 0)
+        self.assertIsInstance(result[0], float)
 
 
 if __name__ == "__main__":
