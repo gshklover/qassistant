@@ -144,6 +144,7 @@ class Agent(BaseAgent):
         self._shell = PythonShell()  # shared python shell instance for tool execution
         self._session = None
         self._tools = [
+            # execution shell:
             copilot.define_tool()(self._shell.execute),
             copilot.define_tool()(self._shell.get_variables),
             *[copilot.define_tool()(tool) for tool in (tools or ())],
@@ -249,13 +250,13 @@ class Agent(BaseAgent):
         """
         Session callback that logs non-streaming events and dispatches to handlers.
         """
-        if event.type.value not in (
-            "assistant.streaming_delta",
-            # "assistant.message_delta",
-            # "assistant.reasoning_delta",
-        ):
-            data = {k: v for k, v in event.data.to_dict().items() if v is not None}
-            print(f"\n{event.type.value} ({event.id}, parent={event.parent_id}): {data}")
+        # if event.type.value not in (
+        #     "assistant.streaming_delta",
+        #     # "assistant.message_delta",
+        #     # "assistant.reasoning_delta",
+        # ):
+        #     data = {k: v for k, v in event.data.to_dict().items() if v is not None}
+        #     print(f"\n{event.type.value} ({event.id}, parent={event.parent_id}): {data}")
 
         if not self._event_handlers:
             return

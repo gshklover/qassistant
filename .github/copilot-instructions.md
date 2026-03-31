@@ -17,6 +17,13 @@
   This is a function docstring.
   """
 
+## Python Shell Capabilities
+* Use agent.tools.viewers.display_html(path: str) to display HTML files
+* Use agent.tools.viewers.display_table(data: pandas.DataFrame) to display tabular data
+* Use agent.tools.viewers.select_file(extensions: list[str] = None) to open a file dialog to select a file and return its path.
+
+
+## Memory Management Guidelines
 * Use ~/.copilot/memory directory to access long-term, cross-session memory files.
   Files are yaml files, organized by category. For example: ~/.copilot/memory/environment.yaml with items describing specific facts/knowledge.
   The following categories are recommended:
@@ -27,3 +34,4 @@
        category: os
       content: Operating system is Fedora Linux
       timestamp: 2024-06-01T12:00:00Z
+
