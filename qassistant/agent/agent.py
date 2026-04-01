@@ -161,6 +161,21 @@ class Agent(BaseAgent):
         )
 
     @property
+    def model(self) -> str:
+        """
+        Get the current model name.
+        """
+        return self._model
+    
+    @model.setter
+    def model(self, new_model: str):
+        """
+        Update the model name in the agent configuration. Note that this will not affect an already running session.
+        """
+        self._model = new_model
+        self._config['model'] = new_model
+
+    @property
     def running(self) -> bool:
         """
         Check if the agent session is currently active.

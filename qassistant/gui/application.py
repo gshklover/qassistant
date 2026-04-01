@@ -2,16 +2,16 @@
 Application entry for qassistant GUI.
 """
 import asyncio
-import os
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication, QGridLayout, QMainWindow, QTabWidget, QWidget, QPushButton, QHBoxLayout, QMenu, QToolButton
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QApplication, QGridLayout, QMainWindow, QTabWidget, QToolBar, QWidget
 import PySide6.QtAsyncio as QtAsyncio
 import qtawesome
 import traceback
 
 
 from ..agent import Agent, Message, Role, TextContent
+from .settings import Settings, SettingsDlg
 from .widgets import ChatWidget
 
 
@@ -19,10 +19,11 @@ class SessionWidget(QWidget):
     """
     Widget representing a single agent session. 
     """
-    def __init__(self, parent: QWidget = None):
+    def __init__(self, settings: Settings, parent: QWidget = None):
         super().__init__(parent=parent)
 
-        self._agent = Agent()
+        self._settings = settings
+        self._agent = Agent(model=settings.model)
         self._chat_widget = ChatWidget(parent=self, sendRequested=self._onSendRequested)
         
         layout = QGridLayout(self)
@@ -73,6 +74,15 @@ class SessionWidget(QWidget):
         self._chat_widget.clearHistory()
         asyncio.create_task(self._agent.reset())  # NOTE: this is async task
 
+    def applySettings(self, settings: Settings) -> None:
+        """
+        Apply updated application settings to this session.
+        """
+        self._settings = settings
+
+        if self._agent.model != settings.model:
+            self._agent.model = settings.model
+
 
 class MainWindow(QMainWindow):
     """
@@ -81,38 +91,32 @@ class MainWindow(QMainWindow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.setWindowTitle("qassistant")
+        self._settings = Settings()
         self._tabs = QTabWidget()
         self._tabs.setTabsClosable(True)
         self._tabs.tabCloseRequested.connect(self._onTabCloseRequested)
         self.setCentralWidget(self._tabs)
+        self._tool_bar = QToolBar("Main", self)
+        self._tool_bar.setMovable(False)
+        self._tool_bar.setIconSize(QSize(32, 32))
+        self.addToolBar(self._tool_bar)
 
-        # Corner widget: menu button + "+" button in the top-right of the tab bar
-        corner = QWidget()
-        corner_layout = QHBoxLayout(corner)
-        corner_layout.setContentsMargins(0, 0, 0, 0)
-        corner_layout.setSpacing(2)
+        self._new_session_action = QAction(qtawesome.icon("mdi6.plus", color='darkgreen'), "New Session", self)
+        self._new_session_action.setToolTip("Open a new session tab")
+        self._new_session_action.triggered.connect(self.addSessionTab)
+        self._tool_bar.addAction(self._new_session_action)
 
-        # Context menu button
-        self._menu_btn = QToolButton(corner)
-        self._menu_btn.setIcon(qtawesome.icon("mdi6.menu"))
-        self._menu_btn.setAutoRaise(True)
-        self._menu_btn.setToolTip("Options...")
-        self._menu_btn.setPopupMode(QToolButton.InstantPopup)
-        self._menu_btn.setStyleSheet("QPushButton { padding: 2px; } QToolButton::menu-indicator { image: none; }")
-        session_menu = QMenu(self._menu_btn)
-        session_menu.addAction(qtawesome.icon("mdi6.refresh"), "Reset").triggered.connect(self._onResetSession)
-        self._menu_btn.setMenu(session_menu)
+        self._reset_session_action = QAction(qtawesome.icon("mdi6.refresh", color='darkred'), "Reset", self)
+        self._reset_session_action.setToolTip("Reset the current session")
+        self._reset_session_action.triggered.connect(self._onResetSession)
+        self._tool_bar.addAction(self._reset_session_action)
 
-        # New session button
-        self._add_tab_btn = QPushButton(qtawesome.icon("mdi6.plus"), "", corner)
-        self._add_tab_btn.setFlat(True)
-        self._add_tab_btn.setStyleSheet("QPushButton { padding: 2px; }")
-        self._add_tab_btn.setToolTip("New session")
-        self._add_tab_btn.clicked.connect(self.addSessionTab)
+        self._tool_bar.addSeparator()
 
-        corner_layout.addWidget(self._menu_btn)
-        corner_layout.addWidget(self._add_tab_btn)
-        self._tabs.setCornerWidget(corner)
+        self._settings_action = QAction(qtawesome.icon("mdi6.cog-outline", color='#404040'), "Settings", self)
+        self._settings_action.setToolTip("Open application settings")
+        self._settings_action.triggered.connect(self._onSettingsRequested)
+        self._tool_bar.addAction(self._settings_action)
 
     def _onResetSession(self) -> None:
         """
@@ -121,6 +125,23 @@ class MainWindow(QMainWindow):
         widget = self._tabs.currentWidget()
         if isinstance(widget, SessionWidget):
             widget.reset()
+
+    def _onSettingsRequested(self) -> None:
+        """
+        Open the application settings dialog.
+        """
+        dialog = SettingsDlg(self._settings, self)
+        dialog.settingsApplied.connect(self._applySettings)
+        dialog.exec()
+
+    def _applySettings(self) -> None:
+        """
+        Apply persisted settings to the main window and active sessions.
+        """
+        for index in range(self._tabs.count()):
+            widget = self._tabs.widget(index)
+            if isinstance(widget, SessionWidget):
+                widget.applySettings(self._settings)
 
     def _onTabCloseRequested(self, index: int) -> None:
         """
@@ -137,7 +158,7 @@ class MainWindow(QMainWindow):
         Add a new session tab to the main window.
         """
         n = self._tabs.count() + 1
-        chat_widget = SessionWidget(parent=self._tabs)
+        chat_widget = SessionWidget(settings=self._settings, parent=self._tabs)
         self._tabs.addTab(chat_widget, qtawesome.icon('mdi6.comment-multiple-outline'), f"Session {n}")
         self._tabs.setCurrentWidget(chat_widget)
         return chat_widget
@@ -162,7 +183,7 @@ class Application(QApplication):
         self.setWindowIcon(qtawesome.icon("mdi6.comment-multiple-outline"))
 
         self.main_window = MainWindow()
-        self.main_window.resize(800, 600)
+        self.main_window.resize(QSize(800, 600))
         self.main_window.addSessionTab()
         self.main_window.show()
 
