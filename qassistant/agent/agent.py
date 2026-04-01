@@ -148,8 +148,8 @@ class Agent(BaseAgent):
         self._session = None
         self._tools = [
             # execution shell:
-            copilot.define_tool()(self._shell.execute),
-            copilot.define_tool()(self._shell.get_variables),
+            copilot.define_tool(name='pyshell_execute')(self._shell.execute),
+            copilot.define_tool(name='pyshell_get_variables')(self._shell.get_variables),
             *[copilot.define_tool()(tool) for tool in (tools or ())],
         ]
         self._event_handlers = list(event_handlers or ())
@@ -197,15 +197,14 @@ class Agent(BaseAgent):
         self._session = await self._client.create_session(**self._config)
         self._session.on(self._on_event)
 
-    async def send(self, message: str):
+    async def send(self, message: str) -> copilot.SessionEvent:
         """
         Send a message to the agent and return the response.
         """
         if not self._session:
             raise RuntimeError("Agent is not running. Call start() first.")
 
-        response = await self._session.send_and_wait(message, timeout=DEFAULT_TIMEOUT)
-        return response
+        return await self._session.send_and_wait(message, timeout=DEFAULT_TIMEOUT)
 
     async def __aenter__(self):
         """
@@ -267,9 +266,9 @@ class Agent(BaseAgent):
         asyncio.create_task(self._handle_event(event))
 
 
-class ModelsClient:
+class Model:
     """
-    Wraps around github models API
+    Wraps around github models API to provide chat completions and text embedding.
     """
     def __init__(self, chat_model: str = DEFAULT_MODEL, embedding_model: str = DEFAULT_EMBEDDING_MODEL):
         """

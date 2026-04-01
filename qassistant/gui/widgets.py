@@ -2,7 +2,7 @@
 QAssistant GUI widgets: content views, chat history and chat widget.
 """
 from PySide6.QtCore import Qt, Signal, QSize, QTimer
-from PySide6.QtGui import QPixmap, QFont, QFontMetrics, QPainter, QConicalGradient, QColor, QPen
+from PySide6.QtGui import QKeyEvent, QPixmap, QFont, QFontMetrics, QPainter, QConicalGradient, QColor, QPen, QTextCursor
 from PySide6.QtWidgets import (
     QWidget,
     QTextEdit,
@@ -18,11 +18,16 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QSpacerItem,
 )
+from pathlib import Path
+import os
 import qtawesome
-from typing import Callable, Any
+from typing import Callable, Any, TypeVar, Generic
 
 
 from ..agent.common import Content, CodeContent, ImageContent, Message, TableContent, TextContent, SectionContent
+
+
+ContentT = TypeVar("ContentT", bound=Content)  # generic type variable for ContentView
 
 
 class Spinner(QWidget):
@@ -126,18 +131,39 @@ class Spinner(QWidget):
         painter.end()
 
 
-class ContentView:
+class ContentView(Generic[ContentT]):
     """
     Base interface for rendering content objects.
     """
     def __init__(self, **kwargs) -> None:
         super(ContentView, self).__init__()
+        self._content = None
 
-    def updateContent(self, content: Any) -> None:  # pragma: no cover - UI
+    def updateContent(self, content: ContentT) -> None:  # pragma: no cover - UI
         """
-        Populate the view from a content object.
+        Populate the view from a content object and register for change notifications.
         """
-        raise NotImplementedError
+        if self._content is not None:
+            self._content.property_changed.disconnect(self._onContentChanged)
+        
+        self._content = content
+
+        if self._content is not None:
+            self._content.property_changed.connect(self._onContentChanged)
+            self._onUpdateContent(self._content)
+
+    def _onContentChanged(self, prop_name: str, prop_value: Any) -> None:
+        """
+        Handle content property changes by refreshing the view.
+        """
+        if self._content is not None:
+            self._onUpdateContent(self._content)
+
+    def _onUpdateContent(self, content: ContentT) -> None:
+        """
+        Override in subclasses to update the view when content changes.
+        """
+        raise NotImplementedError()
 
 
 class TextContentView(QLabel, ContentView):
@@ -152,9 +178,9 @@ class TextContentView(QLabel, ContentView):
         if content:
             self.updateContent(content)
 
-    def updateContent(self, content: TextContent) -> None:
+    def _onUpdateContent(self, content: TextContent) -> None:
         """
-        Update the view with new content.
+        Update the view with new content
         """
         self.setText(content.text)
 
@@ -197,13 +223,12 @@ class CodeContentView(QScrollArea, ContentView):
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; height: 0px; }
             QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }
         """)
-
         if content:
             self.updateContent(content)
 
-    def updateContent(self, content: CodeContent) -> None:
+    def _onUpdateContent(self, content: CodeContent) -> None:
         """
-        Update the content beeing displayed by the view.
+        Update the view from specified content
         """
         code = content.code or ""
         # Put plain code into the label. QLabel will show newlines.
@@ -241,9 +266,9 @@ class ImageContentView(QLabel, ContentView):
         if content:
             self.updateContent(content)
 
-    def updateContent(self, content: ImageContent) -> None:
+    def _onUpdateContent(self, content: ImageContent) -> None:
         """
-        Load image from content and display it. If loading fails, show alt text or placeholder.
+        Load image from content and display it.
         """
         pix = QPixmap(content.path)
         if not pix.isNull():
@@ -263,9 +288,9 @@ class TableContentView(QTableWidget, ContentView):
         if content:
             self.updateContent(content)
 
-    def updateContent(self, content: TableContent) -> None:
+    def _onUpdateContent(self, content: TableContent) -> None:
         """
-        Update content with the specified table data.
+        Update content with the specified table data
         """
         data = content.table
         if not data.shape[0] or not data.shape[1]:
@@ -293,9 +318,9 @@ class SectionContentView(QGroupBox, ContentView):
         if content:
             self.updateContent(content)
 
-    def updateContent(self, content: SectionContent):
+    def _onUpdateContent(self, content: SectionContent):
         """
-        Update the section view with title and nested contents.
+        Update the section view with title and nested contents
         """
         self.setTitle(content.title)
         layout = self.layout()
@@ -506,17 +531,105 @@ class ChatHistoryView(QScrollArea):
         self._auto_scroll = bool(enabled)
 
 
-class _SendTextEdit(QTextEdit):
+class TextAutoCompleter:
+    """
+    Base text auto-completer interface
+    """
+    def __init__(self):
+        pass
+
+    def complete(self, text: str) -> list[str]:
+        """
+        Return a list of completion suggestions for the given text.
+        """
+        return []
+
+
+class PathAutoCompleter(TextAutoCompleter):
+    """
+    Auto-completer for filesystem paths. Can be attached to a QTextEdit to provide path suggestions.
+    """
+    def __init__(self):
+        super().__init__()
+
+    def complete(self, text: str) -> list[str]:
+        """
+        Return path completion candidates for the provided path fragment.
+        """
+        full_text = text or ""
+        if not full_text:
+            return []
+
+        delimiters = set(" \t\r\n\"'`()[]{}<>,;|&")
+        start = len(full_text)
+        while start > 0 and full_text[start - 1] not in delimiters:
+            start -= 1
+
+        prefix_text = full_text[:start]
+        fragment = full_text[start:]
+        if not fragment:
+            return []
+
+        has_separator = "/" in fragment
+        if has_separator:
+            base_part, name_part = fragment.rsplit("/", 1)
+            if fragment.startswith("/") and base_part == "":
+                base_part = "/"
+        else:
+            base_part, name_part = ".", fragment
+
+        search_dir = Path(base_part).expanduser()
+        if not search_dir.is_absolute():
+            search_dir = Path.cwd() / search_dir
+
+        try:
+            entries = sorted(search_dir.iterdir(), key=lambda p: p.name)
+        except (FileNotFoundError, NotADirectoryError, PermissionError):
+            return []
+
+        completions: list[str] = []
+        for entry in entries:
+            if not entry.name.startswith(name_part):
+                continue
+
+            if has_separator:
+                if base_part == "/":
+                    candidate = f"/{entry.name}"
+                else:
+                    candidate = f"{base_part}/{entry.name}"
+            else:
+                candidate = entry.name
+
+            if entry.is_dir():
+                candidate += "/"
+            completions.append(candidate)
+
+        if not completions:
+            return []
+
+        if len(completions) == 1:
+            return [f"{prefix_text}{completions[0]}"]
+
+        common = os.path.commonprefix(completions)
+        if len(common) > len(fragment):
+            return [f"{prefix_text}{common}"]
+        return []
+
+
+class _TextEdit(QTextEdit):
     """
     Internal QTextEdit subclass that emits `submitted` on Enter and inserts a newline on Ctrl/Shift+Enter.
+    Has auto-completion support that can be used to auto-complete file paths, code snippets, etc...
     """
 
     submitted = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._completer = PathAutoCompleter()
+        self._completion_active = False
 
-    def keyPressEvent(self, event):  # pragma: no cover - UI
+    def keyPressEvent(self, event: QKeyEvent):  # pragma: no cover - UI
         """
         Intercept Enter key presses to emit `submitted` or insert a newline.
         """
@@ -528,7 +641,88 @@ class _SendTextEdit(QTextEdit):
                 # Plain Enter → submit
                 self.submitted.emit()
             return
+
+        if event.key() == Qt.Key_Tab and self._completion_active and self.textCursor().hasSelection():
+            self._acceptCompletion()
+            return
+
+        # let user delete the selection without triggering new completion immediately:
+        if event.key() == Qt.Key_Backspace or event.key() == Qt.Key_Delete:
+            super().keyPressEvent(event)
+            self._completion_active = False
+            return
+
         super().keyPressEvent(event)
+
+        if event.modifiers() & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier):
+            self._completion_active = False
+            return
+
+        if event.text():
+            self._updateCompletion()
+        else:
+            self._completion_active = False
+
+    def _currentPathFragment(self) -> tuple[str, int, int]:
+        """
+        Return the current path-like fragment around cursor and its text range.
+        """
+        cursor = self.textCursor()
+        end = cursor.position()
+        text = self.toPlainText()
+
+        delimiters = set(" \t\r\n\"'`()[]{}<>,;|&")
+        start = end
+        while start > 0 and text[start - 1] not in delimiters:
+            start -= 1
+
+        return text[start:end], start, end
+
+    def _updateCompletion(self) -> None:
+        """
+        Compute and display inline completion as selected text.
+        """
+        fragment, start, end = self._currentPathFragment()
+        if not fragment:
+            self._completion_active = False
+            return
+
+        candidates = self._completer.complete(fragment)
+        if not candidates:
+            self._completion_active = False
+            return
+
+        suggestion = candidates[0]
+        if suggestion == fragment or not suggestion.startswith(fragment):
+            self._completion_active = False
+            return
+
+        suffix = suggestion[len(fragment):]
+        if not suffix:
+            self._completion_active = False
+            return
+
+        cursor = self.textCursor()
+        cursor.setPosition(end)
+        cursor.insertText(suffix)
+        selection_end = cursor.position()
+        cursor.setPosition(end)
+        cursor.setPosition(selection_end, QTextCursor.KeepAnchor)
+        self.setTextCursor(cursor)
+        self._completion_active = True
+
+    def _acceptCompletion(self) -> None:
+        """
+        Accept currently selected inline completion text.
+        """
+        cursor = self.textCursor()
+        if not cursor.hasSelection():
+            self._completion_active = False
+            return
+
+        cursor.setPosition(cursor.selectionEnd())
+        self.setTextCursor(cursor)
+        self._completion_active = False
 
 
 class EditBox(QWidget):
@@ -544,7 +738,7 @@ class EditBox(QWidget):
         super().__init__(parent)
 
         # Internal multi-line edit with Enter-to-send handling
-        self._edit = _SendTextEdit(parent=self)
+        self._edit = _TextEdit(parent=self)
         self._edit.setPlaceholderText("Type your message here...")
         self._edit.submitted.connect(self._onSendRequested)
 

@@ -2,17 +2,16 @@
 Unit tests for the Agent event handler integration.
 """
 import asyncio
-import os
+from copilot.generated.session_events import SessionEventType
 from types import SimpleNamespace
 import unittest
 from uuid import uuid4
 
-from copilot.generated.session_events import SessionEventType
 
 from qassistant.agent import Agent, AgentEventHandler
 
 
-class RecordingEventHandler(AgentEventHandler):
+class _RecordingEventsHandler(AgentEventHandler):
     """
     Collects event payloads for validation.
     """
@@ -147,13 +146,16 @@ class RecordingEventHandler(AgentEventHandler):
         })
 
 
-class TestAgentEventDispatch(unittest.IsolatedAsyncioTestCase):
+class TestAgent(unittest.IsolatedAsyncioTestCase):
     """
-    Validate event dispatch logic without requiring a live Copilot session.
+    Test Agent implementation
     """
 
     async def test_dispatch_maps_sdk_payload_fields(self):
-        handler = RecordingEventHandler()
+        """
+        Validate event dispatch logic without requiring a live Copilot session.
+        """
+        handler = _RecordingEventsHandler()
         agent = Agent(event_handlers=[handler])
 
         tool_call_id = str(uuid4())
@@ -203,14 +205,12 @@ class TestAgentEventDispatch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(handler.assistant_reasoning_delta_events[0]["delta_content"], "thought")
         self.assertTrue(handler.tool_execution_complete_events[0]["success"])
 
-
-class TestAgentEventHandlerIntegration(unittest.IsolatedAsyncioTestCase):
-    """
-    Validate live event handler integration with the Copilot session.
-    """
-
     async def test_list_tmp_emits_tool_and_streaming_events(self):
-        handler = RecordingEventHandler()
+        """
+        Validate live event handler integration with the Copilot session.
+        """
+
+        handler = _RecordingEventsHandler()
 
         async with Agent(event_handlers=[handler]) as agent:
             response = await agent.send(
@@ -264,18 +264,65 @@ class TestAgentEventHandlerIntegration(unittest.IsolatedAsyncioTestCase):
         #     "Expected at least one reasoning event while streaming the response.",
         # )
 
+    async def test_agent_shell(self):
+        """
+        Test using python shell with the agent
+        """
+        handler = _RecordingEventsHandler()
 
-class TestModelsClient(unittest.IsolatedAsyncioTestCase):
+        async with Agent(event_handlers=[handler]) as agent:
+            response = await agent.send(
+                "Call the pyshell_execute tool and execute this exact Python code:\n"
+                "def fib(n):\n"
+                "    a, b = 0, 1\n"
+                "    for _ in range(n):\n"
+                "        a, b = b, a + b\n"
+                "    return a\n"
+                "print('110', fib(110))\n"
+                "print('151', fib(151))\n"
+                "print('173', fib(173))\n"
+                "Do not use bash. Then briefly summarize the three computed values."
+            )
+            await asyncio.wait_for(handler.idle_event.wait(), timeout=15)
+            await asyncio.sleep(0.25)
+
+            self.assertIsNotNone(response)
+
+            pyshell_start_event = next(
+                (
+                    event
+                    for event in handler.tool_execution_start_events
+                    if event["tool_name"] == "pyshell_execute"
+                ),
+                None,
+            )
+            self.assertIsNotNone(
+                pyshell_start_event,
+                f"Expected pyshell_execute start event. Saw: {[e['tool_name'] for e in handler.tool_execution_start_events]}",
+            )
+
+            pyshell_complete_event = next(
+                (
+                    event
+                    for event in handler.tool_execution_complete_events
+                    if event["tool_call_id"] == pyshell_start_event["tool_call_id"]
+                ),
+                None,
+            )
+            self.assertIsNotNone(pyshell_complete_event)
+
+
+class TestModel(unittest.IsolatedAsyncioTestCase):
     """
-    Validate ModelsClient chat and embed methods against the live GitHub Models API.
+    Validate Model chat and embed methods against the live GitHub Models API.
     """
 
     async def test_chat_returns_answer_to_arithmetic(self):
         """
         Test that chat() returns a response containing the correct answer to a simple arithmetic question.
         """
-        from qassistant.agent.agent import ModelsClient
-        client = ModelsClient()
+        from qassistant.agent.agent import Model
+        client = Model()
 
         result = await client.chat([{'role': 'user', 'content': 'What is 2+2? Reply with just the number.'}])
 
@@ -285,8 +332,8 @@ class TestModelsClient(unittest.IsolatedAsyncioTestCase):
         """
         Test that embed() returns a non-empty list of floats.
         """
-        from qassistant.agent.agent import ModelsClient
-        client = ModelsClient()
+        from qassistant.agent.agent import Model
+        client = Model()
 
         result = await client.embed('hello world')
 

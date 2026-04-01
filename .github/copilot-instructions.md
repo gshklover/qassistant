@@ -9,9 +9,10 @@
   - `pyside6` for Qt GUI
   - `ruff` for lint testing and fixes
   - `unittest` for testing
+  - `pathlib.Path` for file system paths instead of `os.path`
 * Use type hints for input arguments and return values. Do not generate -> None annotation if a function does not return a value.
 * Do not use import aliases. Example: use 'import pandas', do not use 'import pandas as pd'.
-* Sort imports by name, group standard package imports first, then local imports separated by empty line
+* Sort imports by name, group standard package imports first, then local imports separated by an empty line
 * Use tripple-quote multi-line docstrings. Example:
   """
   This is a function docstring.
