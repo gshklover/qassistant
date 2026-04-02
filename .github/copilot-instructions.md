@@ -19,9 +19,9 @@
   """
 
 ## Python Shell Capabilities
-* Use agent.tools.viewers.display_html(path: str) to display HTML files
-* Use agent.tools.viewers.display_table(data: pandas.DataFrame) to display tabular data
-* Use agent.tools.viewers.select_file(extensions: list[str] = None) to open a file dialog to select a file and return its path.
+* Use qassistant.viewers.display_html(path: str) to display HTML files
+* Use qassistant.viewers.display_table(data: pandas.DataFrame) to display tabular data
+* Use qassistant.viewers.select_file(extensions: list[str] = None) to open a file dialog to select a file and return its path.
 
 
 ## Memory Management Guidelines

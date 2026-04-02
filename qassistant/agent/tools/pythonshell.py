@@ -135,18 +135,23 @@ class PythonShell:
 
     def execute(self, code: str) -> ExecutionResult:
         """
-        Executes the given code and returns the result:
-        - success: indicates if execution was successful
-        - error: error message if execution failed
-        - output: list of printed output lines
-        - result: the value of the last expression in the code
-        """
+        Executes specified code and returns the result.
+
+        :param code: the python code to execute
+        
+        :return: ExecutionResult with the following fields:
+            - success: indicates if execution was successful
+            - error: error message if execution failed
+            - output: list of printed output lines
+            - result: the value of the last expression in the code
+        """        
+        self.shell.user_ns.pop('_', None)  # clear previous '_' value
         
         with _OrderedCapture(self.shell) as captured:
-            self.shell.user_ns.pop('_', None)  # clear previous '_' value
             result = self.shell.run_cell(code)
-            if '_' not in self.shell.user_ns:
-                self.shell.user_ns['_'] = self._extract_assignment(code)
+        
+        if '_' not in self.shell.user_ns:
+            self.shell.user_ns['_'] = self._extract_assignment(code)
 
         if result.error_before_exec:
             return ExecutionResult(success=False, error=str(result.error_before_exec), output=captured.outputs)

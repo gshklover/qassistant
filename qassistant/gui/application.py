@@ -2,17 +2,34 @@
 Application entry for qassistant GUI.
 """
 import asyncio
+from contextlib import contextmanager
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, Qt
 from PySide6.QtWidgets import QApplication, QGridLayout, QMainWindow, QTabWidget, QToolBar, QWidget
 import PySide6.QtAsyncio as QtAsyncio
 import qtawesome
 import traceback
 
 
-from ..agent import Agent, Message, Role, TextContent
+from ..agent import Agent, Message, Role, TextContent, list_models
 from .settings import Settings, SettingsDlg
 from .widgets import ChatWidget
+
+
+@contextmanager
+def WaitCursor():
+    """
+    Override the application cursor with an hourglass while inside the context.
+    """
+    if QApplication.instance() is None:
+        yield
+        return
+
+    QApplication.setOverrideCursor(Qt.WaitCursor)
+    try:
+        yield
+    finally:
+        QApplication.restoreOverrideCursor()
 
 
 class SessionWidget(QWidget):
@@ -128,9 +145,32 @@ class MainWindow(QMainWindow):
 
     def _onSettingsRequested(self) -> None:
         """
-        Open the application settings dialog.
+        Resolve model list and open the application settings dialog.
         """
+        self._settings_action.setEnabled(False)
+        asyncio.create_task(self._prepareSettingsDialog())
+
+    async def _prepareSettingsDialog(self):
+        """
+        Load available model ids prior to opening the settings dialog.
+        """
+        try:
+            with WaitCursor():
+                models = await list_models()
+            if not models:
+                models = [self._settings.model]
+        except Exception:
+            traceback.print_exc()
+            models = [self._settings.model]
+
+        if self._settings.model and self._settings.model not in models:
+            models.insert(0, self._settings.model)
+
+        self._settings.available_models = sorted(models)
+        self._settings_action.setEnabled(True)
+
         dialog = SettingsDlg(self._settings, self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.settingsApplied.connect(self._applySettings)
         dialog.exec()
 

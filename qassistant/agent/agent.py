@@ -4,6 +4,7 @@ Agent implementation. Provides a small adapter around GenAI SDK and tool executi
 import asyncio
 import os
 import traceback
+import weakref
 from typing import Callable
 
 import copilot
@@ -17,6 +18,57 @@ from .tools.pythonshell import PythonShell
 DEFAULT_MODEL = "gpt-5-mini"
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 DEFAULT_TIMEOUT = 300.0  # per-turn timeout in seconds
+
+_MODEL_LIST_CACHE: list[str] | None = None
+_MODEL_LIST_LOCK = asyncio.Lock()
+_SHARED_CLIENT_REF: weakref.ReferenceType[copilot.CopilotClient] | None = None
+_SHARED_CLIENT_START_LOCK = asyncio.Lock()
+
+
+def _get_shared_client() -> copilot.CopilotClient:
+    """
+    Get a shared CopilotClient instance from a module-level weak reference.
+    """
+    global _SHARED_CLIENT_REF
+
+    client = _SHARED_CLIENT_REF() if _SHARED_CLIENT_REF is not None else None
+    if client is None:
+        client = copilot.CopilotClient()
+        _SHARED_CLIENT_REF = weakref.ref(client)
+    return client
+
+
+async def _start_client(client: copilot.CopilotClient) -> None:
+    """
+    Start client if not started already.
+    """
+    if client.get_state() in ("connected", "connecting"):
+        return
+
+    async with _SHARED_CLIENT_START_LOCK:
+        if client.get_state() not in ("connected", "connecting"):
+            await client.start()
+
+
+async def list_models() -> list[str]:
+    """
+    List available model ids from the Copilot API.
+    """
+    global _MODEL_LIST_CACHE
+
+    if _MODEL_LIST_CACHE is not None:
+        return list(_MODEL_LIST_CACHE)
+
+    async with _MODEL_LIST_LOCK:
+        if _MODEL_LIST_CACHE is not None:
+            return list(_MODEL_LIST_CACHE)
+
+        client = _get_shared_client()
+        await _start_client(client)
+        models = await client.list_models()
+
+        _MODEL_LIST_CACHE = [model.id for model in models]
+        return list(_MODEL_LIST_CACHE)
 
 
 # map event type to handler name & argument mapping
@@ -142,7 +194,7 @@ class Agent(BaseAgent):
         """
         Initialize the agent with the specified model, tools, and event handlers.
         """
-        self._client = copilot.CopilotClient()
+        self._client = _get_shared_client()
         self._model = model
         self._shell = PythonShell()  # shared python shell instance for tool execution
         self._session = None
@@ -189,7 +241,7 @@ class Agent(BaseAgent):
         if self._session is not None:
             raise RuntimeError("Agent is already running")
 
-        await self._client.start()
+        await _start_client(self._client)
         self._session = await self._client.create_session(**self._config)
         self._session.on(self._on_event)
 
@@ -200,7 +252,6 @@ class Agent(BaseAgent):
         if self._session:
             await self._session.disconnect()
             self._session = None
-        await self._client.stop()
 
     async def reset(self):
         """
@@ -209,6 +260,7 @@ class Agent(BaseAgent):
         if self._session:
             await self._session.disconnect()
 
+        await _start_client(self._client)
         self._session = await self._client.create_session(**self._config)
         self._session.on(self._on_event)
 

@@ -375,6 +375,8 @@ class ChatMessageView(QWidget):
     Applies a background colour and rounded corners based on the message role.
     """
 
+    stopRequested = Signal(object)
+
     def __init__(self, parent: QWidget | None = None, message: Message = None) -> None:
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -386,9 +388,25 @@ class ChatMessageView(QWidget):
         self._content_layout.setContentsMargins(10, 8, 10, 8)
         self._content_layout.setSpacing(4)
 
-        # Spinner shown while the message is incomplete (streaming)
-        self._spinner = Spinner(parent=self._content_widget, size=24)
-        self._content_layout.addWidget(self._spinner, alignment=Qt.AlignLeft)
+        # Status row shown while the message is incomplete (streaming)
+        self._status_row = QWidget(self._content_widget)
+        self._status_layout = QHBoxLayout(self._status_row)
+        self._status_layout.setContentsMargins(0, 0, 0, 0)
+        self._status_layout.setSpacing(4)
+
+        self._spinner = Spinner(parent=self._status_row, size=24)
+        self._status_layout.addWidget(self._spinner, alignment=Qt.AlignLeft)
+        self._status_layout.addSpacerItem(QSpacerItem(0, 0, QSizePolicy.Expanding, QSizePolicy.Minimum))
+
+        self._stop_btn = QPushButton(parent=self._status_row)
+        self._stop_btn.setFlat(True)
+        self._stop_btn.setToolTip("Stop response")
+        self._stop_btn.setIcon(qtawesome.icon("mdi6.stop-circle-outline", color="#a00000"))
+        self._stop_btn.clicked.connect(self._onStopRequested)
+        self._status_layout.addWidget(self._stop_btn, alignment=Qt.AlignRight)
+
+        self._content_layout.addWidget(self._status_row)
+        self._status_row.hide()
         self._spinner.hide()
 
         # Role icon on the right
@@ -440,10 +458,10 @@ class ChatMessageView(QWidget):
         self._applyRoleStyle(message.role)
 
         layout = self._content_layout
-        # clear existing widgets except the spinner
+        # clear existing widgets except the status row
         for i in reversed(range(layout.count())):
             w = layout.itemAt(i).widget()
-            if w is not None and w is not self._spinner:
+            if w is not None and w is not self._status_row:
                 layout.takeAt(i)
                 w.setParent(None)
 
@@ -451,13 +469,15 @@ class ChatMessageView(QWidget):
             view = _make_view(c)
             if view:
                 view.updateContent(c)
-                layout.insertWidget(layout.indexOf(self._spinner), view)
+                layout.insertWidget(layout.indexOf(self._status_row), view)
 
         # Show spinner (at the bottom) when the message is still streaming
         if message.complete:
             self._spinner.stop()
+            self._status_row.hide()
             self._spinner.hide()
         else:
+            self._status_row.show()
             self._spinner.show()
             self._spinner.start()
 
@@ -468,8 +488,15 @@ class ChatMessageView(QWidget):
         view = _make_view(content)
         if view:
             view.updateContent(content)
-            # Insert before the spinner so it stays at the bottom
-            self._content_layout.insertWidget(self._content_layout.indexOf(self._spinner), view)
+            # Insert before the status row so the status controls stay at the bottom
+            self._content_layout.insertWidget(self._content_layout.indexOf(self._status_row), view)
+
+    def _onStopRequested(self) -> None:
+        """
+        Emit a stop request for this message.
+        """
+        if self._message is not None:
+            self.stopRequested.emit(self._message)
 
 
 class ChatHistoryView(QScrollArea):
@@ -478,8 +505,9 @@ class ChatHistoryView(QScrollArea):
     """
 
     resetRequested = Signal()
+    stopRequested = Signal(object)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, stopRequested: Callable[[object], None] = None) -> None:
         super().__init__(parent)
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -489,7 +517,9 @@ class ChatHistoryView(QScrollArea):
         self._container_layout.setAlignment(Qt.AlignTop)
         container.setLayout(self._container_layout)
         self.setWidget(container)
-        self._auto_scroll = True
+        
+        if stopRequested is not None:
+            self.stopRequested.connect(stopRequested)
 
     def appendMessage(self, message_view: ChatMessageView) -> None:
         """
@@ -512,8 +542,9 @@ class ChatHistoryView(QScrollArea):
         row_widget = QWidget()
         row_widget.setLayout(row)
         self._container_layout.addWidget(row_widget)
-        if self._auto_scroll:
-            self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+        message_view.stopRequested.connect(self.stopRequested.emit)
+        # auto-scroll:
+        self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
     def clear(self) -> None:
         """
@@ -523,12 +554,6 @@ class ChatHistoryView(QScrollArea):
             w = self._container_layout.takeAt(0).widget()
             if w is not None:
                 w.setParent(None)
-
-    def setAutoScroll(self, enabled: bool) -> None:
-        """
-        Enable or disable auto-scrolling when new messages are added.
-        """
-        self._auto_scroll = bool(enabled)
 
 
 class TextAutoCompleter:
@@ -800,10 +825,12 @@ class ChatWidget(QWidget):
     """
 
     sendRequested = Signal(str)
+    stopRequested = Signal(object)
 
-    def __init__(self, parent: QWidget | None = None, sendRequested: Callable[[str], None] = None) -> None:
+    def __init__(self, parent: QWidget | None = None, sendRequested: Callable[[str], None] = None, 
+                 stopRequested: Callable[[object], None] = None) -> None:
         super().__init__(parent)
-        self._messageHistory = ChatHistoryView()
+        self._messageHistory = ChatHistoryView(stopRequested=self.stopRequested.emit)
         self._editBox = EditBox(sendRequested=self._onSendRequested)
         
         layout = QGridLayout(self)        
@@ -813,6 +840,9 @@ class ChatWidget(QWidget):
 
         if sendRequested is not None:
             self.sendRequested.connect(sendRequested)
+
+        if stopRequested is not None:
+            self.stopRequested.connect(stopRequested)
 
     def appendMessage(self, message: Message) -> ChatMessageView:
         """
