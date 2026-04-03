@@ -1,7 +1,7 @@
 """
 QAssistant GUI widgets: content views, chat history and chat widget.
 """
-from PySide6.QtCore import Qt, Signal, QSize, QTimer
+from PySide6.QtCore import QPoint, Qt, Signal, QSize, QTimer
 from PySide6.QtGui import QKeyEvent, QPixmap, QFont, QFontMetrics, QPainter, QConicalGradient, QColor, QPen, QTextCursor
 from PySide6.QtWidgets import (
     QWidget,
@@ -28,6 +28,43 @@ from ..agent.common import Content, CodeContent, ImageContent, Message, TableCon
 
 
 ContentT = TypeVar("ContentT", bound=Content)  # generic type variable for ContentView
+
+
+def drawSpinner(
+    painter: QPainter,
+    size: int,
+    width: int,
+    angle: float,
+    color: QColor = QColor("#5080ff"),
+) -> None:
+    """
+    Draw a rotating conical-gradient ring spinner.
+    """
+    # Rotate so the tip of the gradient leads the counter-clockwise motion
+    painter.rotate(angle)
+
+    # Conical gradient: tip colour at 0°, fading to transparent at 359°
+    gradient = QConicalGradient(0, 0, 0)
+    tip = QColor(color)
+    tip.setAlpha(255)
+    fade = QColor(color)
+    fade.setAlpha(0)
+    gradient.setColorAt(0.0, tip)
+    gradient.setColorAt(1.0, fade)
+
+    pen = QPen(gradient, width)
+    pen.setCapStyle(Qt.RoundCap)
+    painter.setPen(pen)
+    painter.setBrush(Qt.NoBrush)
+
+    margin = width / 2 + 1
+    rect_size = size - 2 * margin
+    painter.drawEllipse(
+        int(-rect_size / 2),
+        int(-rect_size / 2),
+        int(rect_size),
+        int(rect_size),
+    )
 
 
 class Spinner(QWidget):
@@ -102,31 +139,12 @@ class Spinner(QWidget):
         y_off = (self.height() - size) // 2
         painter.translate(x_off + size / 2, y_off + size / 2)
 
-        # Rotate so the tip of the gradient leads the counter-clockwise motion
-        painter.rotate(self._angle)
-
-        # Conical gradient: tip colour at 0°, fading to transparent at 359°
-        gradient = QConicalGradient(0, 0, 0)
-        tip = QColor(self._color)
-        tip.setAlpha(255)
-        fade = QColor(self._color)
-        fade.setAlpha(0)
-        gradient.setColorAt(0.0, tip)
-        gradient.setColorAt(1.0, fade)
-
-        pen_width = self._ring_width
-        pen = QPen(gradient, pen_width)
-        pen.setCapStyle(Qt.RoundCap)
-        painter.setPen(pen)
-        painter.setBrush(Qt.NoBrush)
-
-        margin = pen_width / 2 + 1
-        rect_size = size - 2 * margin
-        painter.drawEllipse(
-            int(-rect_size / 2),
-            int(-rect_size / 2),
-            int(rect_size),
-            int(rect_size),
+        drawSpinner(
+            painter=painter,
+            size=size,
+            width=self._ring_width,
+            angle=self._angle,
+            color=self._color,
         )
         painter.end()
 
@@ -388,25 +406,9 @@ class ChatMessageView(QWidget):
         self._content_layout.setContentsMargins(10, 8, 10, 8)
         self._content_layout.setSpacing(4)
 
-        # Status row shown while the message is incomplete (streaming)
-        self._status_row = QWidget(self._content_widget)
-        self._status_layout = QHBoxLayout(self._status_row)
-        self._status_layout.setContentsMargins(0, 0, 0, 0)
-        self._status_layout.setSpacing(4)
-
-        self._spinner = Spinner(parent=self._status_row, size=24)
-        self._status_layout.addWidget(self._spinner, alignment=Qt.AlignLeft)
-        self._status_layout.addSpacerItem(QSpacerItem(0, 0, QSizePolicy.Expanding, QSizePolicy.Minimum))
-
-        self._stop_btn = QPushButton(parent=self._status_row)
-        self._stop_btn.setFlat(True)
-        self._stop_btn.setToolTip("Stop response")
-        self._stop_btn.setIcon(qtawesome.icon("mdi6.stop-circle-outline", color="#a00000"))
-        self._stop_btn.clicked.connect(self._onStopRequested)
-        self._status_layout.addWidget(self._stop_btn, alignment=Qt.AlignRight)
-
-        self._content_layout.addWidget(self._status_row)
-        self._status_row.hide()
+        # Spinner shown while the message is incomplete (streaming)
+        self._spinner = Spinner(parent=self._content_widget, size=24)
+        self._content_layout.addWidget(self._spinner, alignment=Qt.AlignLeft)
         self._spinner.hide()
 
         # Role icon on the right
@@ -458,10 +460,10 @@ class ChatMessageView(QWidget):
         self._applyRoleStyle(message.role)
 
         layout = self._content_layout
-        # clear existing widgets except the status row
+        # clear existing widgets except the spinner
         for i in reversed(range(layout.count())):
             w = layout.itemAt(i).widget()
-            if w is not None and w is not self._status_row:
+            if w is not None and w is not self._spinner:
                 layout.takeAt(i)
                 w.setParent(None)
 
@@ -469,15 +471,13 @@ class ChatMessageView(QWidget):
             view = _make_view(c)
             if view:
                 view.updateContent(c)
-                layout.insertWidget(layout.indexOf(self._status_row), view)
+                layout.insertWidget(layout.indexOf(self._spinner), view)
 
         # Show spinner (at the bottom) when the message is still streaming
         if message.complete:
             self._spinner.stop()
-            self._status_row.hide()
             self._spinner.hide()
         else:
-            self._status_row.show()
             self._spinner.show()
             self._spinner.start()
 
@@ -488,8 +488,8 @@ class ChatMessageView(QWidget):
         view = _make_view(content)
         if view:
             view.updateContent(content)
-            # Insert before the status row so the status controls stay at the bottom
-            self._content_layout.insertWidget(self._content_layout.indexOf(self._status_row), view)
+            # Insert before the spinner so it stays at the bottom
+            self._content_layout.insertWidget(self._content_layout.indexOf(self._spinner), view)
 
     def _onStopRequested(self) -> None:
         """
@@ -750,6 +750,73 @@ class _TextEdit(QTextEdit):
         self._completion_active = False
 
 
+class SpinnerButton(QPushButton):
+    """
+    Button that can render an animated spinner ring while in busy state.
+    """
+
+    def __init__(self, parent: QWidget | None = None, color: str = "#808080") -> None:
+        super().__init__(parent=parent)
+        self._busy = False
+        self._angle = 0.0
+        self._ring_width = 4
+        self._color = color
+        self._timer = QTimer(self)
+        self._timer.setInterval(30)
+        self._timer.timeout.connect(self._onTick)
+
+    @property
+    def busy(self) -> bool:
+        """
+        Return busy state for this button.
+        """
+        return self._busy
+
+    @busy.setter
+    def busy(self, value: bool):
+        """
+        Toggle busy animation around the button icon.
+        """
+        self._busy = value
+        if value:
+            self._timer.start()
+        else:
+            self._timer.stop()
+            self._angle = 0.0
+        self.update()
+
+    def _onTick(self) -> None:
+        """
+        Advance spinner angle and repaint.
+        """
+        self._angle = (self._angle + 6.0) % 360.0
+        self.update()
+
+    def paintEvent(self, event) -> None:  # pragma: no cover - UI
+        """
+        Paint button and, when busy, a spinner ring around its icon.
+        """
+        super().paintEvent(event)
+        if not self._busy:
+            return
+
+        size = min(self.width(), self.height()) - 4
+        if size <= 8:
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.translate(self.rect().center() + QPoint(1, 1))
+        drawSpinner(
+            painter=painter,
+            size=size,
+            width=self._ring_width,
+            angle=self._angle,
+            color=QColor(self._color),
+        )
+        painter.end()
+
+
 class EditBox(QWidget):
     """
     Composite widget containing a QTextEdit and a send button.
@@ -776,7 +843,8 @@ class EditBox(QWidget):
         self._edit.setFixedHeight(approx_height)
 
         # Single button: shows send icon normally, stop icon when busy
-        self._send_btn = QPushButton(parent=self, enabled=False)
+        self._send_btn = SpinnerButton(parent=self)
+        self._send_btn.setEnabled(False)
         self._send_btn.setFlat(True)
         self._send_btn.setIconSize(QSize(48, 48))
         self._send_btn.setIcon(qtawesome.icon("mdi6.send", active="mdi6.send", color="#808080", disabled="mdi6.comment-multiple-outline"))
@@ -815,11 +883,13 @@ class EditBox(QWidget):
         """
         self._busy = value
         if value:
-            self._send_btn.setIcon(qtawesome.icon("mdi6.stop", color="#a00000"))
+            self._send_btn.setIcon(qtawesome.icon("mdi6.stop", color="#808080"))
             self._send_btn.setEnabled(True)
+            self._send_btn.busy = True
         else:
             self._send_btn.setIcon(qtawesome.icon("mdi6.send", active="mdi6.send", color="#808080", disabled="mdi6.comment-multiple-outline"))
             self._send_btn.setEnabled(len(self.getText()) > 0)
+            self._send_btn.busy = False
 
     def _onButtonClicked(self):
         """
