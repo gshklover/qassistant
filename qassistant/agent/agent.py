@@ -273,6 +273,13 @@ class Agent(BaseAgent):
 
         return await self._session.send_and_wait(message, timeout=DEFAULT_TIMEOUT)
 
+    async def abort(self):
+        """
+        Abort the current agent turn.
+        """
+        if self._session:
+            await self._session.abort()
+
     async def __aenter__(self):
         """
         Start running the agent.

@@ -41,7 +41,7 @@ class SessionWidget(QWidget):
 
         self._settings = settings
         self._agent = Agent(model=settings.model)
-        self._chat_widget = ChatWidget(parent=self, sendRequested=self._onSendRequested)
+        self._chat_widget = ChatWidget(parent=self, sendRequested=self._onSendRequested, stopRequested=self._onStopRequested)
         
         layout = QGridLayout(self)
         layout.addWidget(self._chat_widget, 0, 0)
@@ -62,7 +62,15 @@ class SessionWidget(QWidget):
         response_message = Message(role=Role.ASSISTANT, content=[], complete=False)
         self._chat_widget.appendMessage(response_message)
 
+        self._chat_widget.busy = True
         asyncio.create_task(self._processRequest(message, response_message))
+
+    def _onStopRequested(self):
+        """
+        Handle stop requests from the UI and signal the agent to stop processing.
+        """
+        if self._agent.running:
+            asyncio.create_task(self._agent.abort())
 
     async def _processRequest(self, message: str, response_message: Message):
         """
@@ -78,11 +86,16 @@ class SessionWidget(QWidget):
             traceback.print_exc()
             response_message.content.append(TextContent(text=f"Error: {exc}"))
         else:
-            # regular response:
-            response_message.content.append(TextContent(text=response.data.content))
+            if response is None:
+                # aborted response:
+                response_message.content.append(TextContent(text="<i>Aborted...</i>", format='html'))
+            else:
+                # regular response:
+                response_message.content.append(TextContent(text=response.data.content))
 
         response_message.complete = True
         self._chat_widget.updateMessage(response_message)
+        self._chat_widget.busy = False
 
     def reset(self) -> None:
         """

@@ -755,28 +755,32 @@ class EditBox(QWidget):
     Composite widget containing a QTextEdit and a send button.
 
     Emits `sendRequested` when the user requests a send (button or Ctrl+Enter).
+    Emits `stopRequested` when the stop button is clicked while busy.
     """
 
     sendRequested = Signal(str)
+    stopRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None, sendRequested: Callable = None) -> None:
         super().__init__(parent)
+        self._busy = False
 
         # Internal multi-line edit with Enter-to-send handling
         self._edit = _TextEdit(parent=self)
         self._edit.setPlaceholderText("Type your message here...")
-        self._edit.submitted.connect(self._onSendRequested)
+        self._edit.submitted.connect(self._onButtonClicked)
 
         # Set height to roughly 4 lines
         fm = self._edit.fontMetrics()
         approx_height = fm.lineSpacing() * 4 + 12
         self._edit.setFixedHeight(approx_height)
 
-        # Send button inside the edit box widget
-        self._send_btn = QPushButton(parent=self, enabled=False, clicked=self._onSendRequested)
+        # Single button: shows send icon normally, stop icon when busy
+        self._send_btn = QPushButton(parent=self, enabled=False)
         self._send_btn.setFlat(True)
         self._send_btn.setIconSize(QSize(48, 48))
         self._send_btn.setIcon(qtawesome.icon("mdi6.send", active="mdi6.send", color="#808080", disabled="mdi6.comment-multiple-outline"))
+        self._send_btn.clicked.connect(self._onButtonClicked)
 
         # Layout the edit and the button next to each other
         layout = QGridLayout(self)
@@ -795,16 +799,38 @@ class EditBox(QWidget):
         """
         Triggered when the text in the edit box changes.
         """
-        active = len(self.getText()) > 0
-        self._send_btn.setEnabled(active)
+        self._send_btn.setEnabled(self._busy or len(self.getText()) > 0)
 
-    def _onSendRequested(self):
+    @property
+    def busy(self) -> bool:
         """
-        Emit sendRequested only if the edit box contains non-empty text.
+        Return True if the widget is in busy state.
         """
-        text = self.getText()
-        if len(text) > 0:
-            self.sendRequested.emit(text)
+        return self._busy
+
+    @busy.setter
+    def busy(self, value: bool):
+        """
+        Set the busy state. When True, the button shows a stop icon and emits ``stopRequested`` on click.
+        """
+        self._busy = value
+        if value:
+            self._send_btn.setIcon(qtawesome.icon("mdi6.stop", color="#a00000"))
+            self._send_btn.setEnabled(True)
+        else:
+            self._send_btn.setIcon(qtawesome.icon("mdi6.send", active="mdi6.send", color="#808080", disabled="mdi6.comment-multiple-outline"))
+            self._send_btn.setEnabled(len(self.getText()) > 0)
+
+    def _onButtonClicked(self):
+        """
+        Emit stopRequested when busy, or sendRequested when text is available.
+        """
+        if self._busy:
+            self.stopRequested.emit()
+        else:
+            text = self.getText()
+            if text:
+                self.sendRequested.emit(text)
 
     def getText(self) -> str:
         """
@@ -832,7 +858,8 @@ class ChatWidget(QWidget):
         super().__init__(parent)
         self._messageHistory = ChatHistoryView(stopRequested=self.stopRequested.emit)
         self._editBox = EditBox(sendRequested=self._onSendRequested)
-        
+        self._editBox.stopRequested.connect(lambda: self.stopRequested.emit(None))
+
         layout = QGridLayout(self)        
         layout.addWidget(self._messageHistory, 0, 0, 1, 2)
         layout.addWidget(self._editBox, 1, 0, 1, 2)
@@ -861,12 +888,36 @@ class ChatWidget(QWidget):
             if view.role() == message.role and view.message is message:
                 view.updateContent(message)
 
+    def removeMessage(self, message: Message) -> None:
+        """
+        Remove the ChatMessageView associated with the given message from the history.
+        """
+        for view in self._messageHistory.findChildren(ChatMessageView):
+            if view.role() == message.role and view.message is message:
+                view.setParent(None)
+                break
+
     def _onSendRequested(self, text: str) -> None:
         """
         Emit sendRequested with the current edit box text and clear it.
         """
         self._editBox.clearText()
         self.sendRequested.emit(text)
+
+    @property
+    def busy(self) -> bool:
+        """
+        Return True if the widget is in busy state.
+        """
+        return self._editBox.busy
+
+    @busy.setter
+    def busy(self, value: bool):
+        """
+        Set the busy state. When True, the submit button is replaced by a spinner and stop button.
+        Clicking stop emits ``stopRequested``. While busy, ``sendRequested`` is not emitted.
+        """
+        self._editBox.busy = value
 
     def clearHistory(self) -> None:
         """
