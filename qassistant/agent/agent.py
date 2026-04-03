@@ -2,6 +2,9 @@
 Agent implementation. Provides a small adapter around GenAI SDK and tool execution.
 """
 import asyncio
+import dataclasses
+import inspect
+import functools
 import os
 import traceback
 import weakref
@@ -179,6 +182,29 @@ _EVENT_METHOD_BY_TYPE = {
 }
 
 
+def as_tool(func: Callable, **kwargs) -> Callable:
+    """
+    Decorator to mark a function as a tool for the agent.
+    """
+    sig = inspect.signature(func)
+    
+    ArgType = dataclasses.make_dataclass(
+        cls_name="Args",
+        fields=[(param.name, param.annotation) for param in sig.parameters.values()],
+    )
+
+    @functools.wraps(func)
+    def wrapper(arg):
+        return func(**arg.to_dict())
+
+    wrapper.__name__ = kwargs.get("name", func.__name__)
+    wrapper.__annotations__.setdefault("return", func.__annotations__.get("return", None))
+    wrapper.__annotations__["arg"] = ArgType
+
+    return copilot.define_tool(**kwargs)(wrapper)
+
+
+
 class Agent(BaseAgent):
     """
     Base agent class implementation using copilot SDK.
@@ -200,9 +226,9 @@ class Agent(BaseAgent):
         self._session = None
         self._tools = [
             # execution shell:
-            copilot.define_tool(name='pyshell_execute')(self._shell.execute),
-            copilot.define_tool(name='pyshell_get_variables')(self._shell.get_variables),
-            *[copilot.define_tool()(tool) for tool in (tools or ())],
+            as_tool(self._shell.execute, name='pyshell_execute'),
+            as_tool(self._shell.get_variables, name='pyshell_get_variables'),
+            *[as_tool(tool) for tool in (tools or ())],
         ]
         self._event_handlers = list(event_handlers or ())
         self._config = dict(
