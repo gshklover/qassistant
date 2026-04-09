@@ -226,6 +226,19 @@ class BaseAgent(ABC):
     Abstract base class describing the public agent interface.
     Implementations must provide async lifecycle methods and a message API.
     """
+    @property
+    def model(self) -> str:
+        """
+        Return the name of the underlying model used by the agent.
+        """
+        return ''
+
+    @property
+    def workspace_path(self) -> str:
+        """
+        Return agent workspace path
+        """
+        return ''
 
     @abstractmethod
     async def start(self):

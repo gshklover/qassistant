@@ -3,6 +3,7 @@ Application entry for qassistant GUI.
 """
 import asyncio
 from contextlib import contextmanager
+import sys
 from PySide6.QtCore import QSize, Signal
 from PySide6.QtGui import QAction, Qt
 from PySide6.QtWidgets import QApplication, QGridLayout, QMainWindow, QStatusBar, QTabWidget, QToolBar, QWidget
@@ -34,10 +35,10 @@ def WaitCursor():
 
 class SessionWidget(QWidget):
     """
-    Widget representing a single agent session. 
+    Widget representing a single agent session.
     """
 
-    workAreaChanged = Signal(str)
+    workspaceChanged = Signal(str)
 
     def __init__(self, settings: Settings, parent: QWidget = None):
         super().__init__(parent=parent)
@@ -45,7 +46,7 @@ class SessionWidget(QWidget):
         self._settings = settings
         self._agent = Agent(model=settings.model)
         self._chat_widget = ChatWidget(parent=self, sendRequested=self._onSendRequested, stopRequested=self._onStopRequested)
-        
+
         layout = QGridLayout(self)
         layout.addWidget(self._chat_widget, 0, 0)
         layout.setRowStretch(0, 1)
@@ -53,11 +54,11 @@ class SessionWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
     @property
-    def currentWorkArea(self) -> str:
+    def workspacePath(self) -> str:
         """
-        Return current work area path for this session.
+        Return current workspace path for this session.
         """
-        return self._agent.currentWorkArea
+        return self._agent.workspace_path
 
     def _onSendRequested(self, message: str):
         """
@@ -67,7 +68,7 @@ class SessionWidget(QWidget):
         self._chat_widget.appendMessage(
             Message(role=Role.USER, content=[TextContent(text=message)])
         )
-        
+
         # create a new placeholder for assisatant response and run the agent:
         response_message = Message(role=Role.ASSISTANT, content=[], complete=False)
         self._chat_widget.appendMessage(response_message)
@@ -89,6 +90,8 @@ class SessionWidget(QWidget):
         if not self._agent.running:
             await self._agent.start()
 
+        prev_workspace = self._agent.workspace_path
+
         try:
             response = await self._agent.send(message=message)
         except Exception as exc:
@@ -106,7 +109,9 @@ class SessionWidget(QWidget):
         response_message.complete = True
         self._chat_widget.updateMessage(response_message)
         self._chat_widget.busy = False
-        self.workAreaChanged.emit(self.currentWorkArea)
+
+        if self.workspacePath != prev_workspace:
+            self.workspaceChanged.emit(self.workspacePath)
 
     def reset(self) -> None:
         """
@@ -114,7 +119,7 @@ class SessionWidget(QWidget):
         """
         self._chat_widget.clearHistory()
         asyncio.create_task(self._agent.reset())  # NOTE: this is async task
-        self.workAreaChanged.emit(self.currentWorkArea)
+        self.workspaceChanged.emit(self.workspacePath)
 
     def applySettings(self, settings: Settings) -> None:
         """
@@ -146,7 +151,7 @@ class MainWindow(QMainWindow):
 
         self._status_bar = QStatusBar(self)
         self.setStatusBar(self._status_bar)
-        self._status_bar.showMessage("Work area: <unknown>")
+        self._status_bar.showMessage("Workspace: <unknown>")
 
         self._new_session_action = QAction(qtawesome.icon("mdi6.plus", color='darkgreen'), "New Session", self)
         self._new_session_action.setToolTip("Open a new session tab")
@@ -235,7 +240,7 @@ class MainWindow(QMainWindow):
         Update status bar only for the currently selected session.
         """
         if self.sender() is self._tabs.currentWidget():
-            self._status_bar.showMessage(f"Work area: {path}")
+            self._status_bar.showMessage(f"Workspace: {path}")
 
     def _updateStatusBar(self) -> None:
         """
@@ -243,9 +248,9 @@ class MainWindow(QMainWindow):
         """
         widget = self._tabs.currentWidget()
         if isinstance(widget, SessionWidget):
-            self._status_bar.showMessage(f"Work area: {widget.currentWorkArea}")
+            self._status_bar.showMessage(f"Workspace: {widget.workspacePath}")
         else:
-            self._status_bar.showMessage("Work area: <unknown>")
+            self._status_bar.showMessage("Workspace: <unknown>")
 
     def addSessionTab(self) -> ChatWidget:
         """
@@ -253,7 +258,7 @@ class MainWindow(QMainWindow):
         """
         n = self._tabs.count() + 1
         chat_widget = SessionWidget(settings=self._settings, parent=self._tabs)
-        chat_widget.workAreaChanged.connect(self._onSessionWorkAreaChanged)
+        chat_widget.workspaceChanged.connect(self._onSessionWorkAreaChanged)
         self._tabs.addTab(chat_widget, qtawesome.icon('mdi6.comment-multiple-outline'), f"Session {n}")
         self._tabs.setCurrentWidget(chat_widget)
         self._updateStatusBar()
@@ -271,12 +276,17 @@ class Application(QApplication):
     Main application class for qassistant GUI.
     """
     def __init__(self):
-        super().__init__([])        
+        super().__init__([])
+
+        if sys.platform == "win32":
+            import ctypes
+            myappid = 'com.qassistant.app'  # arbitrary string
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
         self.setApplicationName("qassistant")
         self.setDesktopFileName('qassistant')
         self.setApplicationVersion("0.0.1")
-        self.setWindowIcon(qtawesome.icon("mdi6.comment-multiple-outline"))
+        self.setWindowIcon(qtawesome.icon("mdi6.comment-multiple-outline", size=64))
 
         self.main_window = MainWindow()
         self.main_window.resize(QSize(800, 600))

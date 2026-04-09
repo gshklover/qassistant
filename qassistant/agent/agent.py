@@ -215,6 +215,7 @@ class Agent(BaseAgent):
         self._model = model
         self._shell = PythonShell()  # shared python shell instance for tool execution
         self._session = None
+        self._work_area = os.getcwd()
         self._tools = [
             # execution shell:
             as_tool(self._shell.execute, name='pyshell_execute'),
@@ -252,11 +253,11 @@ class Agent(BaseAgent):
         return self._session is not None
 
     @property
-    def currentWorkArea(self) -> str:
+    def workspace_path(self) -> str:
         """
         Return current work area used by the session shell.
         """
-        return self._shell.currentWorkArea
+        return self._work_area
 
     async def start(self):
         """
@@ -295,7 +296,9 @@ class Agent(BaseAgent):
         if not self._session:
             raise RuntimeError("Agent is not running. Call start() first.")
 
-        return await self._session.send_and_wait(message, timeout=DEFAULT_TIMEOUT)
+        res = await self._session.send_and_wait(message, timeout=DEFAULT_TIMEOUT)
+        self._work_area = self._session.workspace_path
+        return res
 
     async def abort(self):
         """
