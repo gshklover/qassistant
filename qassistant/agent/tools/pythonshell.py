@@ -4,6 +4,7 @@ Python execution shell impementation for use with agent tools.
 import ast
 import dataclasses
 import sys
+from pathlib import Path
 from IPython.core.interactiveshell import InteractiveShell
 from typing import Any
 
@@ -132,6 +133,13 @@ class PythonShell:
     """
     def __init__(self, shell: InteractiveShell = None):
         self.shell = shell or InteractiveShell()
+
+    @property
+    def currentWorkArea(self) -> str:
+        """
+        Return current shell working directory.
+        """
+        return str(Path.cwd())
 
     def execute(self, code: str) -> ExecutionResult:
         """

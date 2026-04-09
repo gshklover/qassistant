@@ -7,7 +7,6 @@ import inspect
 import functools
 import os
 import traceback
-import weakref
 from typing import Callable
 
 import copilot
@@ -24,33 +23,27 @@ DEFAULT_TIMEOUT = 300.0  # per-turn timeout in seconds
 
 _MODEL_LIST_CACHE: list[str] | None = None
 _MODEL_LIST_LOCK = asyncio.Lock()
-_SHARED_CLIENT_REF: weakref.ReferenceType[copilot.CopilotClient] | None = None
-_SHARED_CLIENT_START_LOCK = asyncio.Lock()
+_SHARED_CLIENT: copilot.CopilotClient | None = None
+_SHARED_CLIENT_LOCK = asyncio.Lock()
 
 
-def _get_shared_client() -> copilot.CopilotClient:
+async def _get_client() -> copilot.CopilotClient:
     """
-    Get a shared CopilotClient instance from a module-level weak reference.
+    Return a shared Copilot client that is started and ready.
     """
-    global _SHARED_CLIENT_REF
+    global _SHARED_CLIENT
 
-    client = _SHARED_CLIENT_REF() if _SHARED_CLIENT_REF is not None else None
-    if client is None:
-        client = copilot.CopilotClient()
-        _SHARED_CLIENT_REF = weakref.ref(client)
-    return client
+    if _SHARED_CLIENT is not None and _SHARED_CLIENT.get_state() in ("connected", "connecting"):
+        return _SHARED_CLIENT
 
+    async with _SHARED_CLIENT_LOCK:
+        if _SHARED_CLIENT is None:
+            _SHARED_CLIENT = copilot.CopilotClient()
 
-async def _start_client(client: copilot.CopilotClient) -> None:
-    """
-    Start client if not started already.
-    """
-    if client.get_state() in ("connected", "connecting"):
-        return
+        if _SHARED_CLIENT.get_state() not in ("connected", "connecting"):
+            await _SHARED_CLIENT.start()
 
-    async with _SHARED_CLIENT_START_LOCK:
-        if client.get_state() not in ("connected", "connecting"):
-            await client.start()
+        return _SHARED_CLIENT
 
 
 async def list_models() -> list[str]:
@@ -66,8 +59,7 @@ async def list_models() -> list[str]:
         if _MODEL_LIST_CACHE is not None:
             return list(_MODEL_LIST_CACHE)
 
-        client = _get_shared_client()
-        await _start_client(client)
+        client = await _get_client()
         models = await client.list_models()
 
         _MODEL_LIST_CACHE = [model.id for model in models]
@@ -187,7 +179,7 @@ def as_tool(func: Callable, **kwargs) -> Callable:
     Decorator to mark a function as a tool for the agent.
     """
     sig = inspect.signature(func)
-    
+
     ArgType = dataclasses.make_dataclass(
         cls_name="Args",
         fields=[(param.name, param.annotation) for param in sig.parameters.values()],
@@ -220,7 +212,6 @@ class Agent(BaseAgent):
         """
         Initialize the agent with the specified model, tools, and event handlers.
         """
-        self._client = _get_shared_client()
         self._model = model
         self._shell = PythonShell()  # shared python shell instance for tool execution
         self._session = None
@@ -232,7 +223,7 @@ class Agent(BaseAgent):
         ]
         self._event_handlers = list(event_handlers or ())
         self._config = dict(
-            on_permission_request=copilot.PermissionHandler.approve_all,
+            on_permission_request=copilot.session.PermissionHandler.approve_all,
             model=model,
             tools=self._tools,
             streaming=True,
@@ -244,7 +235,7 @@ class Agent(BaseAgent):
         Get the current model name.
         """
         return self._model
-    
+
     @model.setter
     def model(self, new_model: str):
         """
@@ -260,6 +251,13 @@ class Agent(BaseAgent):
         """
         return self._session is not None
 
+    @property
+    def currentWorkArea(self) -> str:
+        """
+        Return current work area used by the session shell.
+        """
+        return self._shell.currentWorkArea
+
     async def start(self):
         """
         Start the agent by initializing the Copilot client.
@@ -267,8 +265,8 @@ class Agent(BaseAgent):
         if self._session is not None:
             raise RuntimeError("Agent is already running")
 
-        await _start_client(self._client)
-        self._session = await self._client.create_session(**self._config)
+        client = await _get_client()
+        self._session = await client.create_session(**self._config)
         self._session.on(self._on_event)
 
     async def stop(self):
@@ -286,8 +284,8 @@ class Agent(BaseAgent):
         if self._session:
             await self._session.disconnect()
 
-        await _start_client(self._client)
-        self._session = await self._client.create_session(**self._config)
+        client = await _get_client()
+        self._session = await client.create_session(**self._config)
         self._session.on(self._on_event)
 
     async def send(self, message: str) -> copilot.SessionEvent:

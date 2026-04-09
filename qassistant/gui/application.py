@@ -3,9 +3,9 @@ Application entry for qassistant GUI.
 """
 import asyncio
 from contextlib import contextmanager
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, Signal
 from PySide6.QtGui import QAction, Qt
-from PySide6.QtWidgets import QApplication, QGridLayout, QMainWindow, QTabWidget, QToolBar, QWidget
+from PySide6.QtWidgets import QApplication, QGridLayout, QMainWindow, QStatusBar, QTabWidget, QToolBar, QWidget
 import PySide6.QtAsyncio as QtAsyncio
 import qtawesome
 import traceback
@@ -36,6 +36,9 @@ class SessionWidget(QWidget):
     """
     Widget representing a single agent session. 
     """
+
+    workAreaChanged = Signal(str)
+
     def __init__(self, settings: Settings, parent: QWidget = None):
         super().__init__(parent=parent)
 
@@ -48,6 +51,13 @@ class SessionWidget(QWidget):
         layout.setRowStretch(0, 1)
         layout.setColumnStretch(0, 1)
         layout.setContentsMargins(0, 0, 0, 0)
+
+    @property
+    def currentWorkArea(self) -> str:
+        """
+        Return current work area path for this session.
+        """
+        return self._agent.currentWorkArea
 
     def _onSendRequested(self, message: str):
         """
@@ -96,6 +106,7 @@ class SessionWidget(QWidget):
         response_message.complete = True
         self._chat_widget.updateMessage(response_message)
         self._chat_widget.busy = False
+        self.workAreaChanged.emit(self.currentWorkArea)
 
     def reset(self) -> None:
         """
@@ -103,6 +114,7 @@ class SessionWidget(QWidget):
         """
         self._chat_widget.clearHistory()
         asyncio.create_task(self._agent.reset())  # NOTE: this is async task
+        self.workAreaChanged.emit(self.currentWorkArea)
 
     def applySettings(self, settings: Settings) -> None:
         """
@@ -125,11 +137,16 @@ class MainWindow(QMainWindow):
         self._tabs = QTabWidget()
         self._tabs.setTabsClosable(True)
         self._tabs.tabCloseRequested.connect(self._onTabCloseRequested)
+        self._tabs.currentChanged.connect(self._onCurrentTabChanged)
         self.setCentralWidget(self._tabs)
         self._tool_bar = QToolBar("Main", self)
         self._tool_bar.setMovable(False)
         self._tool_bar.setIconSize(QSize(32, 32))
         self.addToolBar(self._tool_bar)
+
+        self._status_bar = QStatusBar(self)
+        self.setStatusBar(self._status_bar)
+        self._status_bar.showMessage("Work area: <unknown>")
 
         self._new_session_action = QAction(qtawesome.icon("mdi6.plus", color='darkgreen'), "New Session", self)
         self._new_session_action.setToolTip("Open a new session tab")
@@ -205,6 +222,30 @@ class MainWindow(QMainWindow):
             self._tabs.removeTab(index)
             if widget is not None:
                 widget.deleteLater()
+            self._updateStatusBar()
+
+    def _onCurrentTabChanged(self, _: int) -> None:
+        """
+        Refresh status bar when active tab changes.
+        """
+        self._updateStatusBar()
+
+    def _onSessionWorkAreaChanged(self, path: str) -> None:
+        """
+        Update status bar only for the currently selected session.
+        """
+        if self.sender() is self._tabs.currentWidget():
+            self._status_bar.showMessage(f"Work area: {path}")
+
+    def _updateStatusBar(self) -> None:
+        """
+        Display current session work area in the status bar.
+        """
+        widget = self._tabs.currentWidget()
+        if isinstance(widget, SessionWidget):
+            self._status_bar.showMessage(f"Work area: {widget.currentWorkArea}")
+        else:
+            self._status_bar.showMessage("Work area: <unknown>")
 
     def addSessionTab(self) -> ChatWidget:
         """
@@ -212,8 +253,10 @@ class MainWindow(QMainWindow):
         """
         n = self._tabs.count() + 1
         chat_widget = SessionWidget(settings=self._settings, parent=self._tabs)
+        chat_widget.workAreaChanged.connect(self._onSessionWorkAreaChanged)
         self._tabs.addTab(chat_widget, qtawesome.icon('mdi6.comment-multiple-outline'), f"Session {n}")
         self._tabs.setCurrentWidget(chat_widget)
+        self._updateStatusBar()
         return chat_widget
 
     def currentSessionTab(self) -> ChatWidget:
