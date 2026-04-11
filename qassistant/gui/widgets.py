@@ -24,7 +24,7 @@ import qtawesome
 from typing import Callable, TypeVar, Generic
 
 
-from ..agent.common import Content, CodeContent, ImageContent, Message, TableContent, TextContent, SectionContent
+from ..agent.common import Content, CodeContent, ImageContent, Message, MessageState, TableContent, TextContent, SectionContent
 
 
 ContentT = TypeVar("ContentT", bound=Content)  # generic type variable for ContentView
@@ -375,6 +375,13 @@ _ROLE_ICONS = {
 }
 _ROLE_ICON_SIZE = 28
 
+_STATE_LABELS = {
+    MessageState.PROCESSING: "Thinking…",
+    MessageState.EXECUTING: "Executing…",
+    MessageState.THINKING: "Thinking…",
+    MessageState.FAILED: "Failed",
+}
+
 
 class ChatMessageView(QWidget):
     """
@@ -394,6 +401,20 @@ class ChatMessageView(QWidget):
         self._content_layout = QVBoxLayout(self._content_widget)
         self._content_layout.setContentsMargins(10, 8, 10, 8)
         self._content_layout.setSpacing(4)
+
+        # Status bar: spinner + label shown while message is active
+        self._status_bar = QWidget()
+        status_layout = QHBoxLayout(self._status_bar)
+        status_layout.setContentsMargins(0, 2, 0, 0)
+        status_layout.setSpacing(4)
+        self._status_spinner = Spinner(size=16, ring_width=2, color="#5080ff")
+        self._status_label = QLabel()
+        self._status_label.setStyleSheet("color: #606060; font-size: 11px;")
+        status_layout.addWidget(self._status_spinner)
+        status_layout.addWidget(self._status_label)
+        status_layout.addStretch()
+        self._content_layout.addWidget(self._status_bar)
+        self._status_bar.setVisible(False)
 
         # Role icon on the right
         self._icon_label = QLabel()
@@ -441,11 +462,18 @@ class ChatMessageView(QWidget):
         """
         Incrementally update the content parts of the given message.
         Only create or delete widgets if the content type or count changes; otherwise, update content on existing widgets.
+        The status bar at the bottom is always kept as the last item.
         """
         self._applyRoleStyle(message.role)
         layout = self._content_layout
         new_contents = message.content
-        old_widgets = [layout.itemAt(i).widget() for i in range(layout.count())]
+
+        # Collect content widgets, excluding the status bar which is always last
+        old_widgets = [
+            layout.itemAt(i).widget()
+            for i in range(layout.count())
+            if layout.itemAt(i).widget() is not self._status_bar
+        ]
 
         reuse_count = min(len(new_contents), len(old_widgets))
         for i in range(reuse_count):
@@ -470,8 +498,24 @@ class ChatMessageView(QWidget):
             new_widget = _make_view(content)
             if new_widget:
                 new_widget.updateContent(content)
-                layout.addWidget(new_widget)
+                # Insert before the status bar (always last)
+                layout.insertWidget(layout.count() - 1, new_widget)
+
         self._message = message
+        self._updateStatusBar(message.state)
+
+    def _updateStatusBar(self, state: MessageState) -> None:
+        """
+        Show or hide the status bar spinner and label based on the message state.
+        """
+        active = state not in (MessageState.COMPLETE, MessageState.FAILED)
+        label = _STATE_LABELS.get(state, "")
+        self._status_label.setText(label)
+        self._status_bar.setVisible(active)
+        if active:
+            self._status_spinner.start()
+        else:
+            self._status_spinner.stop()
 
 
 class ChatHistoryView(QScrollArea):

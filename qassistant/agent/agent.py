@@ -2,7 +2,11 @@
 Agent implementation. Provides a small adapter around GenAI SDK and tool execution.
 """
 import asyncio
+import base64
+import json
+
 import copilot
+import keyring
 from copilot.generated.session_events import SessionEventType
 import dataclasses
 import inspect
@@ -16,6 +20,7 @@ from .common import AgentEventHandler, BaseAgent
 from .tools.pythonshell import PythonShell
 
 
+# agent defaults:
 DEFAULT_MODEL = "gpt-5-mini"
 DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 DEFAULT_TIMEOUT = 300.0  # per-turn timeout in seconds
@@ -216,8 +221,8 @@ class Agent(BaseAgent):
         self._workspace_path = os.getcwd()
         self._tools = [
             # execution shell:
-            as_tool(self._shell.execute, name='python-shell.execute'),
-            as_tool(self._shell.get_variables, name='python-shell.get_variables'),
+            as_tool(self._shell.execute, name='python_shell_execute'),
+            as_tool(self._shell.get_variables, name='python_shell_get_variables'),
             *[as_tool(tool) for tool in (tools or ())],
         ]
         self._event_handlers = list(event_handlers or ())
@@ -287,7 +292,7 @@ class Agent(BaseAgent):
         self._session = await client.create_session(**self._config)
         self._session.on(self._on_event)
 
-    async def send(self, message: str) -> copilot.SessionEvent:
+    async def send(self, message: str) -> copilot.session.SessionEvent:
         """
         Send a message to the agent and return the response.
         """
@@ -332,7 +337,7 @@ class Agent(BaseAgent):
         """
         await self.stop()
 
-    async def _handle_event(self, event: copilot.SessionEvent):
+    async def _handle_event(self, event: copilot.session.SessionEvent):
         """
         Route an event to all configured handlers using event-type-specific hooks.
         """
@@ -382,15 +387,34 @@ class Model:
         """
         Initialize the client with authentication and model configuration.
         """
-        with open(os.path.expanduser('~/.copilot.cfg')) as stream:
-            self._token = stream.read().strip()
+        config_path = os.path.expanduser('~/.copilot/config.json')
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"Failed to find ~/.copilot/config.json")
+
+        with open(config_path) as stream:
+            config = json.load(stream)
+            host = config['logged_in_users'][0]['host']
+            user_name = config['logged_in_users'][0]['login']
+            # access Windows Credential Manager to get copilot-cli token:
+            token = keyring.get_password(f'copilot-cli/{host}:{user_name}', f'{host}:{user_name}')
+            if not token:
+                raise ValueError(f'Failed to get token for {host}:{user_name}')
+            # FIXME: this does not seem to be the right way to convert the token Bearer token:
+            token = base64.b64encode(token.encode('utf-8')).decode('utf-8')
 
         self._client = AsyncOpenAI(
             base_url='https://models.github.ai/inference',
-            api_key=self._token,
+            api_key=token,
         )
         self._chat_model = f'openai/{chat_model}'
         self._embedding_model = f'openai/{embedding_model}'
+
+    async def complete(self, prompt: str) -> str:
+        """
+        Get a completion for the input prompt.
+        """
+        response = await self._client.completions.create(prompt=prompt, model=self._chat_model, echo=False)
+        return response.choices[0].text
 
     async def chat(self, messages: list[dict]) -> str:
         """

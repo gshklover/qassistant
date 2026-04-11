@@ -377,6 +377,16 @@ class TestModel(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(len(result), 0)
         self.assertIsInstance(result[0], float)
 
+    async def test_complete(self):
+        """
+        Test that complete() returns a response containing the correct answer to a simple arithmetic question.
+        """
+        from qassistant.agent.agent import Model
+        client = Model()
+
+        result = await client.complete('2 + 2 = ')
+        self.assertIn('4', result)
+
 
 if __name__ == "__main__":
     unittest.main()

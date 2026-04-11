@@ -11,10 +11,11 @@ import PySide6.QtAsyncio as QtAsyncio
 import qtawesome
 import traceback
 
-
 from ..agent import Agent, AgentEventHandler, Message, Role, TextContent, list_models
 from .settings import Settings, SettingsDlg
+from .._version import __version__
 from .widgets import ChatWidget
+from ..agent.common import MessageState
 
 
 @contextmanager
@@ -41,6 +42,12 @@ class _SessionStreamHandler(AgentEventHandler):
     def __init__(self, widget: "SessionWidget"):
         self._widget = widget
 
+    async def on_tool_execution_start(self, tool_name, arguments, tool_call_id, interaction_id):
+        self._widget._onMessageStateChanged(MessageState.EXECUTING)
+
+    async def on_tool_execution_complete(self, tool_call_id, success, result, error, interaction_id):
+        self._widget._onMessageStateChanged(MessageState.PROCESSING)
+
     async def on_assistant_message_delta(self, delta_content, message_id, interaction_id):
         if delta_content:
             self._widget._onMessageDelta(delta_content)
@@ -50,7 +57,9 @@ class _SessionStreamHandler(AgentEventHandler):
             self._widget._setAssistantMessage(content)
 
     async def on_assistant_turn_end(self, turn_id):
-        self._widget._finalizeResponse()
+        # will be handled by assistant idle
+        # self._widget._finalizeResponse()
+        pass
 
     async def on_session_idle(self, background_tasks):
         self._widget._onSessionIdle()
@@ -78,7 +87,6 @@ class SessionWidget(QWidget):
         self._response_text: TextContent | None = None
         self._has_delta_content = False
         self._aborted = False
-        self._prev_workspace_path = self._agent.workspace_path
 
         layout = QGridLayout(self)
         layout.addWidget(self._chat_widget, 0, 0)
@@ -104,15 +112,13 @@ class SessionWidget(QWidget):
 
         # create a new placeholder for assisatant response and run the agent:
         self._response_text = TextContent(text="")
-        self._response_message = Message(role=Role.ASSISTANT, content=[self._response_text], complete=False)
+        self._response_message = Message(role=Role.ASSISTANT, content=[self._response_text], state=MessageState.PROCESSING)
         self._chat_widget.appendMessage(self._response_message)
         self._has_delta_content = False
         self._aborted = False
-        self._prev_workspace_path = self._agent.workspace_path
 
         self._chat_widget.busy = True
-        task = asyncio.create_task(self.submit(message))
-        task.add_done_callback(self._onSubmitDone)
+        asyncio.create_task(self.submit(message))
 
     def _onStopRequested(self):
         """
@@ -131,15 +137,15 @@ class SessionWidget(QWidget):
 
         await self._agent.submit(message=message)
 
-    def _onSubmitDone(self, task: asyncio.Task) -> None:
+    def _onMessageStateChanged(self, state: MessageState) -> None:
         """
-        Handle immediate submission failures.
+        Update the state of the active response message and refresh the chat view.
         """
-        try:
-            task.result()
-        except Exception as exc:
-            traceback.print_exc()
-            self._onSessionError(str(exc))
+        if self._response_message is None:
+            return
+
+        self._response_message.state = state
+        self._chat_widget.updateMessage(self._response_message)
 
     def _onMessageDelta(self, delta: str) -> None:
         """
@@ -177,7 +183,7 @@ class SessionWidget(QWidget):
         """
         Session is idle; ensure the current response is finalized.
         """
-        if self._response_message is not None and not self._response_message.complete:
+        if self._response_message is not None:
             self._finalizeResponse()
 
     def _finalizeResponse(self) -> None:
@@ -192,12 +198,9 @@ class SessionWidget(QWidget):
             self._response_text.text = "<i>Aborted...</i>"
             self._response_text.format = "html"
 
-        self._response_message.complete = True
+        self._response_message.state = MessageState.COMPLETE
         self._chat_widget.updateMessage(self._response_message)
         self._chat_widget.busy = False
-
-        if self.workspacePath != self._prev_workspace_path:
-            self.workspaceChanged.emit(self.workspacePath)
 
         self._response_message = None
         self._response_text = None
@@ -371,19 +374,19 @@ class Application(QApplication):
 
         if sys.platform == "win32":
             import ctypes
-            myappid = 'com.qassistant.app'  # arbitrary string
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('com.qassistant.app')
 
         self.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling)
         self.setApplicationName("qassistant")
         self.setDesktopFileName('qassistant')
-        self.setApplicationVersion("0.0.1")
+        self.setApplicationVersion(__version__)
         self.setWindowIcon(qtawesome.icon("mdi6.comment-multiple-outline", size=64))
 
         self.main_window = MainWindow()
         self.main_window.resize(QSize(800, 600))
         self.main_window.addSessionTab()
         self.main_window.show()
+        self.main_window.raise_()
 
 
 def run_app():

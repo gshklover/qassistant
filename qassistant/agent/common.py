@@ -5,6 +5,7 @@ Defines the BaseAgent interface used by concrete Agent implementations.
 """
 from abc import ABC, abstractmethod
 import dataclasses
+import enum
 import pandas
 import traceback
 from typing import Any, Callable, Generic, TypeVarTuple
@@ -343,6 +344,17 @@ class Role(str):
     TOOL = 'tool'
 
 
+class MessageState(enum.StrEnum):
+    """
+    Enum-line class for message states
+    """
+    PROCESSING = 'processing'  # local processing
+    THINKING = 'thinking'      # set while calling LLM model
+    EXECUTING ='executing'     # set while executing a tool
+    COMPLETE = 'complete'      # final state after processing is done
+    FAILED = 'failed'          # set when an error occurred while handling a message
+
+
 @dataclasses.dataclass(slots=True)
 class Message:
     """
@@ -351,7 +363,7 @@ class Message:
     role: str = Role.USER  # e.g. 'user', 'assistant', 'system'
     content: list[Content] = dataclasses.field(default_factory=list)
     metadata: dict[str, Any] = dataclasses.field(default_factory=dict)
-    complete: bool = True # indicates if this message is a complete response or part of a stream
+    state: MessageState = MessageState.COMPLETE  # only makes sense for assistant messages
 
     def append(self, content: Content):
         """
