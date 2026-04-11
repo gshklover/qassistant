@@ -26,7 +26,7 @@ def wait_cursor():
         yield
         return
 
-    QApplication.setOverrideCursor(Qt.WaitCursor)
+    QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
     try:
         yield
     finally:

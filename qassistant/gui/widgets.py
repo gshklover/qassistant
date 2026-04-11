@@ -1,6 +1,8 @@
 """
 QAssistant GUI widgets: content views, chat history and chat widget.
 """
+import os
+from pathlib import Path
 from PySide6.QtCore import QPoint, Qt, Signal, QSize, QTimer
 from PySide6.QtGui import QKeyEvent, QPixmap, QFont, QFontMetrics, QPainter, QConicalGradient, QColor, QPen, QTextCursor
 from PySide6.QtWidgets import (
@@ -18,10 +20,8 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QSpacerItem,
 )
-from pathlib import Path
-import os
 import qtawesome
-from typing import Callable, Any, TypeVar, Generic
+from typing import Callable, TypeVar, Generic
 
 
 from ..agent.common import Content, CodeContent, ImageContent, Message, TableContent, TextContent, SectionContent
@@ -53,9 +53,9 @@ def drawSpinner(
     gradient.setColorAt(1.0, fade)
 
     pen = QPen(gradient, width)
-    pen.setCapStyle(Qt.RoundCap)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     painter.setPen(pen)
-    painter.setBrush(Qt.NoBrush)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
 
     margin = width / 2 + 1
     rect_size = size - 2 * margin
@@ -101,7 +101,7 @@ class Spinner(QWidget):
         self._ring_width = ring_width
         self._color = QColor(color)
         self.setFixedSize(QSize(size, size))
-        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
 
         self._timer = QTimer(self)
         self._timer.setInterval(interval)
@@ -132,7 +132,7 @@ class Spinner(QWidget):
         """
         size = min(self.width(), self.height())
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # Centre the drawing square
         x_off = (self.width() - size) // 2
@@ -178,7 +178,7 @@ class TextContentView(QLabel, ContentView):
 
     def __init__(self, content: TextContent = None, parent: QWidget | None = None) -> None:
         super().__init__(parent=parent)
-        self.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.setWordWrap(True)
         if content:
             self.updateContent(content)
@@ -205,21 +205,21 @@ class CodeContentView(QScrollArea, ContentView):
     def __init__(self, content: CodeContent = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._text = QLabel()
-        self._text.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._text.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         # Use a monospace font for code
         font = QFont("Monospace")
-        font.setStyleHint(QFont.TypeWriter)
+        font.setStyleHint(QFont.StyleHint.TypeWriter)
         self._text.setFont(font)
         self._text.setWordWrap(False)
-        self._text.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        self._text.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self._text.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self._text.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
 
         self.setWidget(self._text)
         # We will control the label size explicitly so the scroll area can show
         # a horizontal scrollbar when needed.
         self.setWidgetResizable(False)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         # Narrow, rounded scrollbar without corner buttons
         self.setStyleSheet("""
@@ -267,7 +267,7 @@ class ImageContentView(QLabel, ContentView):
 
     def __init__(self, content: ImageContent = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         if content:
             self.updateContent(content)
 
@@ -277,7 +277,7 @@ class ImageContentView(QLabel, ContentView):
         """
         pix = QPixmap(content.path)
         if not pix.isNull():
-            self.setPixmap(pix.scaledToWidth(600, Qt.SmoothTransformation))
+            self.setPixmap(pix.scaledToWidth(600, Qt.TransformationMode.SmoothTransformation))
         else:
             self.setText("[image not available]")
 
@@ -289,7 +289,7 @@ class TableContentView(QTableWidget, ContentView):
 
     def __init__(self, content: TableContent = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         if content:
             self.updateContent(content)
 
@@ -642,8 +642,9 @@ class _TextEdit(QTextEdit):
         """
         Intercept Enter key presses to emit `submitted` or insert a newline.
         """
-        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
-            if event.modifiers() & Qt.ControlModifier or event.modifiers() & Qt.ShiftModifier:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            if (event.modifiers() & Qt.KeyboardModifier.ControlModifier or
+                    event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
                 # Ctrl+Enter → insert a literal newline
                 self.insertPlainText("\n")
             else:

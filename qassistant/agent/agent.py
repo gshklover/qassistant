@@ -195,7 +195,6 @@ def as_tool(func: Callable, **kwargs) -> Callable:
     return copilot.define_tool(**kwargs)(wrapper)
 
 
-
 class Agent(BaseAgent):
     """
     Base agent class implementation using copilot SDK.
@@ -217,8 +216,8 @@ class Agent(BaseAgent):
         self._workspace_path = os.getcwd()
         self._tools = [
             # execution shell:
-            as_tool(self._shell.execute, name='pyshell_execute'),
-            as_tool(self._shell.get_variables, name='pyshell_get_variables'),
+            as_tool(self._shell.execute, name='python-shell.execute'),
+            as_tool(self._shell.get_variables, name='python-shell.get_variables'),
             *[as_tool(tool) for tool in (tools or ())],
         ]
         self._event_handlers = list(event_handlers or ())
