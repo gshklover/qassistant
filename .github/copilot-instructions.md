@@ -2,8 +2,8 @@
 
 * Use modular project structure with consistent python styling, separate concepts such as: data vs UI, command line vs core modules...
 * For Qt-derived classes, use Qt-style naming convention (camelCase function names)
-* Generate unit tests using 'unittest' python framework in 'tests' sub-directory for core modules.
-* Perform incremental changes to fullfil user requests, do not introduce unnecessary changes to existing code.
+* Generate unit tests using 'unittest' python framework in 'tests' sub-directory for core modules. Use per-module test_ files (not per-class).
+* Perform incremental changes to fulfil user requests, do not introduce unnecessary changes to existing code.
 * Use the following packages:
   - `click` for command line processing
   - `pyside6` for Qt GUI
@@ -17,22 +17,5 @@
   """
   This is a function docstring.
   """
-
-## Python Shell Capabilities
-* Use qassistant.viewers.display_html(path: str) to display HTML files
-* Use qassistant.viewers.display_table(data: pandas.DataFrame) to display tabular data
-* Use qassistant.viewers.select_file(extensions: list[str] = None) to open a file dialog to select a file and return its path.
-
-
-## Memory Management Guidelines
-* Use ~/.copilot/memory directory to access long-term, cross-session memory files.
-  Files are yaml files, organized by category. For example: ~/.copilot/memory/environment.yaml with items describing specific facts/knowledge.
-  The following categories are recommended:
-    - environement: facts about the user machine (OS, software, common tools, etc)
-    - preferences: user preferences (editor, coding style, etc)
-  Example:
-    - id: os-001
-       category: os
-      content: Operating system is Fedora Linux
-      timestamp: 2024-06-01T12:00:00Z
-
+* Use declarative Qt syntax, preferring to pass widget properties / signal handlers in constructors instead of explicit functional calls.
+  Example: QPushButton("Click me", clicked=self._onClick)

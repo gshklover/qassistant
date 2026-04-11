@@ -12,8 +12,10 @@ dependencies = [
     "ipython>=9.11.0",
     "jupyter>=1.1.1",
     "keyring>=25.7.0",
+    "markdown>=3.10.2",
     "openai>=2.30.0",
     "pandas>=3.0.1",
+    "pygments>=2.19.2",
     "pyside6>=6.10.2",
     "qtawesome>=1.4.1",
 ]

@@ -2,15 +2,13 @@
 Agent implementation. Provides a small adapter around GenAI SDK and tool execution.
 """
 import asyncio
-import base64
-import json
-
 import copilot
-import keyring
 from copilot.generated.session_events import SessionEventType
 import dataclasses
-import inspect
 import functools
+import inspect
+import json
+import keyring
 from openai import AsyncOpenAI
 import os
 import traceback
@@ -262,15 +260,20 @@ class Agent(BaseAgent):
         """
         return self._workspace_path
 
-    async def start(self):
+    async def start(self, session_id: str = None):
         """
         Start the agent by initializing the Copilot client.
+
+        :param session_id: The session ID to resume. If not specified, a new session is created.
         """
         if self._session is not None:
             raise RuntimeError("Agent is already running")
 
         client = await _get_client()
-        self._session = await client.create_session(**self._config)
+        if session_id is not None:
+            self._session = await client.resume_session(working_directory=self._workspace_path, session_id=session_id, **self._config)
+        else:
+            self._session = await client.create_session(working_directory=self._workspace_path, **self._config)
         self._session.on(self._on_event)
 
     async def stop(self):
@@ -318,6 +321,16 @@ class Agent(BaseAgent):
         """
         if self._session:
             await self._session.abort()
+
+    async def set_workspace(self, path: str):
+        """
+        Set the workspace to the specified path.
+        """
+        self._workspace_path = path
+        if self._session is not None:
+            session_id = self._session.session_id
+            await self.stop()
+            await self.start(session_id=session_id)
 
     async def __aenter__(self):
         """
@@ -395,12 +408,13 @@ class Model:
             config = json.load(stream)
             host = config['logged_in_users'][0]['host']
             user_name = config['logged_in_users'][0]['login']
-            # access Windows Credential Manager to get copilot-cli token:
-            token = keyring.get_password(f'copilot-cli/{host}:{user_name}', f'{host}:{user_name}')
-            if not token:
-                raise ValueError(f'Failed to get token for {host}:{user_name}')
-            # FIXME: this does not seem to be the right way to convert the token Bearer token:
-            token = base64.b64encode(token.encode('utf-8')).decode('utf-8')
+
+        # access Windows Credential Manager to get copilot-cli token:
+        # "keyring" attempts to decode it using utf-16 by default, we reverse the encoding
+        token_utf16 = keyring.get_password(f'copilot-cli/{host}:{user_name}', f'{host}:{user_name}')
+        if not token_utf16:
+            raise ValueError(f'Failed to get token for {host}:{user_name}')
+        token = token_utf16.encode('utf-16')[2:].decode('ascii')
 
         self._client = AsyncOpenAI(
             base_url='https://models.github.ai/inference',
@@ -409,12 +423,14 @@ class Model:
         self._chat_model = f'openai/{chat_model}'
         self._embedding_model = f'openai/{embedding_model}'
 
-    async def complete(self, prompt: str) -> str:
-        """
-        Get a completion for the input prompt.
-        """
-        response = await self._client.completions.create(prompt=prompt, model=self._chat_model, echo=False)
-        return response.choices[0].text
+    # NOT SUPPORTED BY GITHUB MODELS
+    # async def complete(self, prompt: str) -> str:
+    #     """
+    #     Get a completion for the input prompt.
+    #     Not supported by newer models.
+    #     """
+    #     response = await self._client.completions.create(prompt=prompt, model=self._chat_model, echo=False)
+    #     return response.choices[0].text
 
     async def chat(self, messages: list[dict]) -> str:
         """

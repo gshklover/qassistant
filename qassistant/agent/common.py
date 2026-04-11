@@ -286,7 +286,7 @@ class TextContent(Content):
     Simple text content unit.
     """
     text: str = ''
-    format: str = "plain"  # e.g. "plain", "markdown", "html"
+    format: str = "markdown"  # e.g. "plain", "markdown", "html"
 
 
 @dataclasses.dataclass(slots=True)
@@ -326,12 +326,13 @@ class SectionContent(Content):
 
 
 @dataclasses.dataclass(slots=True)
-class ProgressContent(Content):
+class ToolCallContent(Content):
     """
-    Progress update content unit for streaming responses.
+    Tool call content unit for rendering tool execution details.
     """
-    progress: float = 0.0# value between 0.0 and 1.0 indicating completion percentage
-    message: str | None = None  # optional message describing the current progress
+    tool_name: str = ""
+    arguments: str = ""
+    result: str = ""
 
 
 class Role(str):

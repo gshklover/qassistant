@@ -1,6 +1,7 @@
 """
 QAssistant GUI widgets: content views, chat history and chat widget.
 """
+import markdown
 import os
 from pathlib import Path
 from PySide6.QtCore import QPoint, Qt, Signal, QSize, QTimer
@@ -24,7 +25,7 @@ import qtawesome
 from typing import Callable, TypeVar, Generic
 
 
-from ..agent.common import Content, CodeContent, ImageContent, Message, MessageState, TableContent, TextContent, SectionContent
+from ..agent.common import CodeContent, Content, ImageContent, Message, MessageState, SectionContent, TableContent, TextContent, ToolCallContent
 
 
 ContentT = TypeVar("ContentT", bound=Content)  # generic type variable for ContentView
@@ -173,21 +174,35 @@ class ContentView(Generic[ContentT]):
 
 class TextContentView(QLabel, ContentView):
     """
-    View for `TextContent` using a read-only QTextEdit for wrapping.
+    View for `TextContent` rendered as rich text using QLabel.
+    Markdown is converted to HTML using the markdown package.
     """
 
     def __init__(self, content: TextContent = None, parent: QWidget | None = None) -> None:
         super().__init__(parent=parent)
-        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.setTextFormat(Qt.TextFormat.RichText)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse)
         self.setWordWrap(True)
+        self.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         if content:
             self.updateContent(content)
 
     def _onUpdateContent(self, content: TextContent) -> None:
         """
-        Update the view with new content
+        Update the view with new content.
         """
-        self.setText(content.text)
+        text = content.text or ""
+        content_format = (content.format or "markdown").lower()
+
+        if content_format == "plain":
+            self.setText(text)
+        elif content_format == "html":
+            self.setText(text)
+        else:
+            # FIXME: need to include corresponding CSS from pygments:
+            html = markdown.markdown(text, extensions=["codehilite", "fenced_code", "tables"])
+            self.setText(html)
 
 
 class CodeContentView(QScrollArea, ContentView):
@@ -343,6 +358,95 @@ class SectionContentView(QGroupBox, ContentView):
                 layout.addWidget(view)
 
 
+class ToolCallContentView(QWidget, ContentView):
+    """
+    View for tool call details during streaming execution.
+    Shows a tools icon and the tool name; click to expand arguments and result.
+    """
+
+    _ICON_SIZE = 16
+
+    def __init__(self, content: ToolCallContent = None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._expanded = False
+        self.setStyleSheet("background-color: #f0f0f0; border-radius: 4px;")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
+        # Header row: icon + tool name label (clickable)
+        header = QWidget(self)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(6, 4, 6, 4)
+        header_layout.setSpacing(6)
+
+        self._iconLabel = QLabel(header)
+        self._iconLabel.setPixmap(
+            qtawesome.icon("mdi6.tools", color="#505050").pixmap(self._ICON_SIZE, self._ICON_SIZE)
+        )
+        self._iconLabel.setFixedSize(self._ICON_SIZE, self._ICON_SIZE)
+
+        self._nameLabel = QLabel(header)
+        self._nameLabel.setTextFormat(Qt.TextFormat.RichText)
+        self._nameLabel.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self._nameLabel.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+        self._toggleLabel = QLabel(header)
+        self._toggleLabel.setTextFormat(Qt.TextFormat.RichText)
+        self._toggleLabel.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self._toggleLabel.setStyleSheet("color: #808080;")
+
+        header_layout.addWidget(self._iconLabel)
+        header_layout.addWidget(self._nameLabel)
+        header_layout.addWidget(self._toggleLabel)
+
+        # Details area: arguments + result (hidden when collapsed)
+        self._detailsWidget = QWidget(self)
+        self._detailsWidget.setVisible(False)
+        details_layout = QVBoxLayout(self._detailsWidget)
+        details_layout.setContentsMargins(6 + self._ICON_SIZE + 6, 0, 6, 6)
+        details_layout.setSpacing(2)
+
+        self._detailsLabel = QLabel(self._detailsWidget)
+        self._detailsLabel.setTextFormat(Qt.TextFormat.RichText)
+        self._detailsLabel.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._detailsLabel.setWordWrap(True)
+        details_layout.addWidget(self._detailsLabel)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(header)
+        outer.addWidget(self._detailsWidget)
+
+        header.setCursor(Qt.CursorShape.PointingHandCursor)
+        header.mousePressEvent = lambda _: self._toggleExpanded()
+
+        if content:
+            self.updateContent(content)
+
+    def _toggleExpanded(self):
+        """
+        Toggle the expanded/collapsed state of the details area.
+        """
+        self._expanded = not self._expanded
+        self._detailsWidget.setVisible(self._expanded)
+        self._toggleLabel.setText("▲" if self._expanded else "▼")
+
+    def _onUpdateContent(self, content: ToolCallContent) -> None:
+        """
+        Update tool name header and expandable details from content.
+        """
+        tool_name = content.tool_name or "<unknown>"
+        arguments = content.arguments or "<none>"
+        result = content.result or "<pending>"
+
+        self._nameLabel.setText(f"<b>{tool_name}</b>")
+        self._toggleLabel.setText("▲" if self._expanded else "▼")
+        self._detailsLabel.setText(
+            f"<span style='color:#505050'><b>Args:</b> {arguments}</span><br>"
+            f"<span style='color:#404040'><b>Result:</b> {result}</span>"
+        )
+
+
 # Map content type to content view type
 _CONTENT_VIEW_TYPE_MAP = {
     TextContent: TextContentView,
@@ -350,6 +454,7 @@ _CONTENT_VIEW_TYPE_MAP = {
     ImageContent: ImageContentView,
     TableContent: TableContentView,
     SectionContent: SectionContentView,
+    ToolCallContent: ToolCallContentView,
 }
 
 def _make_view(content: Content, parent: QWidget = None) -> ContentView | None:

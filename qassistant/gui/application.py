@@ -6,7 +6,7 @@ from contextlib import contextmanager
 import sys
 from PySide6.QtCore import QSize, Signal
 from PySide6.QtGui import QAction, Qt
-from PySide6.QtWidgets import QApplication, QGridLayout, QMainWindow, QStatusBar, QTabWidget, QToolBar, QWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMainWindow, QPushButton, QStatusBar, QTabWidget, QToolBar, QWidget
 import PySide6.QtAsyncio as QtAsyncio
 import qtawesome
 import traceback
@@ -15,7 +15,7 @@ from ..agent import Agent, AgentEventHandler, Message, Role, TextContent, list_m
 from .settings import Settings, SettingsDlg
 from .._version import __version__
 from .widgets import ChatWidget
-from ..agent.common import MessageState
+from ..agent.common import MessageState, ToolCallContent
 
 
 @contextmanager
@@ -43,9 +43,11 @@ class _SessionStreamHandler(AgentEventHandler):
         self._widget = widget
 
     async def on_tool_execution_start(self, tool_name, arguments, tool_call_id, interaction_id):
+        self._widget._onToolExecutionStart(tool_name, arguments, tool_call_id)
         self._widget._onMessageStateChanged(MessageState.EXECUTING)
 
     async def on_tool_execution_complete(self, tool_call_id, success, result, error, interaction_id):
+        self._widget._onToolExecutionComplete(tool_call_id, success, result, error)
         self._widget._onMessageStateChanged(MessageState.PROCESSING)
 
     async def on_assistant_message_delta(self, delta_content, message_id, interaction_id):
@@ -84,7 +86,7 @@ class SessionWidget(QWidget):
         self._agent = Agent(model=settings.model, event_handlers=[self._stream_handler])
         self._chat_widget = ChatWidget(parent=self, sendRequested=self._onSendRequested, stopRequested=self._onStopRequested)
         self._response_message: Message | None = None
-        self._response_text: TextContent | None = None
+        self._tool_call_content_map: dict[str, ToolCallContent] = {}
         self._has_delta_content = False
         self._aborted = False
 
@@ -111,8 +113,7 @@ class SessionWidget(QWidget):
         )
 
         # create a new placeholder for assisatant response and run the agent:
-        self._response_text = TextContent(text="")
-        self._response_message = Message(role=Role.ASSISTANT, content=[self._response_text], state=MessageState.PROCESSING)
+        self._response_message = Message(role=Role.ASSISTANT, content=[], state=MessageState.PROCESSING)
         self._chat_widget.appendMessage(self._response_message)
         self._has_delta_content = False
         self._aborted = False
@@ -151,32 +152,87 @@ class SessionWidget(QWidget):
         """
         Append streamed assistant delta content to the active response message.
         """
-        if self._response_message is None or self._response_text is None:
+        if self._response_message is None:
             return
 
+        response_text = self._ensureTrailingTextContent()
         self._has_delta_content = True
-        self._response_text.text += delta
+        response_text.text += delta
         self._chat_widget.updateMessage(self._response_message)
 
     def _setAssistantMessage(self, content: str) -> None:
         """
         Apply final assistant message content when no deltas were produced.
         """
-        if self._response_message is None or self._response_text is None:
+        if self._response_message is None:
             return
 
         if not self._has_delta_content:
-            self._response_text.text = content
+            response_text = self._ensureTrailingTextContent()
+            response_text.text = content
             self._chat_widget.updateMessage(self._response_message)
+
+    def _ensureTrailingTextContent(self) -> TextContent:
+        """
+        Return the trailing text content block, creating one at the end if needed.
+        """
+        if self._response_message is None:
+            raise RuntimeError("No active response message")
+
+        last_content = self._response_message.content[-1] if self._response_message.content else None
+        if isinstance(last_content, TextContent):
+            return last_content
+
+        response_text = TextContent(text="")
+        self._response_message.append(response_text)
+        return response_text
+
+    def _onToolExecutionStart(self, tool_name: str | None, arguments, tool_call_id: str | None):
+        """
+        Append a tool call content block when tool execution starts.
+        """
+        if self._response_message is None:
+            return
+
+        tool_call_content = ToolCallContent(
+            tool_name=tool_name or "",
+            arguments=str(arguments) if arguments is not None else "",
+            result="<running>",
+        )
+        self._response_message.append(tool_call_content)
+        if tool_call_id:
+            self._tool_call_content_map[tool_call_id] = tool_call_content
+        # Next streamed delta should become a new text chunk after this tool call.
+        self._chat_widget.updateMessage(self._response_message)
+
+    def _onToolExecutionComplete(self, tool_call_id: str | None, success: bool | None, result, error):
+        """
+        Update tool call content with completion result.
+        """
+        if self._response_message is None:
+            return
+
+        tool_call_content = self._tool_call_content_map.get(tool_call_id or "")
+        if tool_call_content is None:
+            tool_call_content = ToolCallContent(tool_name="", arguments="", result="")
+            self._response_message.append(tool_call_content)
+
+        if success:
+            tool_call_content.result = str(result) if result is not None else ""
+        else:
+            tool_call_content.result = str(error) if error is not None else "<failed>"
+
+        self._chat_widget.updateMessage(self._response_message)
 
     def _onSessionError(self, details: str) -> None:
         """
         Render session errors inside the active assistant message.
         """
-        if self._response_message is not None and self._response_text is not None:
-            if self._response_text.text:
-                self._response_text.text += "\n\n"
-            self._response_text.text += f"Error: {details}"
+        if self._response_message is not None:
+            response_text = self._ensureTrailingTextContent()
+            if response_text.text:
+                response_text.text += "\n\n"
+            response_text.text += f"Error: {details}"
         self._finalizeResponse()
 
     def _onSessionIdle(self) -> None:
@@ -194,16 +250,17 @@ class SessionWidget(QWidget):
             self._chat_widget.busy = False
             return
 
-        if self._aborted and self._response_text is not None and not self._response_text.text:
-            self._response_text.text = "<i>Aborted...</i>"
-            self._response_text.format = "html"
+        if self._aborted:
+            response_text = self._ensureTrailingTextContent()
+            response_text.text = "<i>Aborted...</i>"
+            response_text.format = "html"
 
         self._response_message.state = MessageState.COMPLETE
         self._chat_widget.updateMessage(self._response_message)
         self._chat_widget.busy = False
 
         self._response_message = None
-        self._response_text = None
+        self._tool_call_content_map.clear()
         self._has_delta_content = False
         self._aborted = False
 
@@ -213,6 +270,7 @@ class SessionWidget(QWidget):
         """
         self._chat_widget.clearHistory()
         asyncio.create_task(self._agent.reset())  # NOTE: this is async task
+        self._tool_call_content_map.clear()
         self.workspaceChanged.emit(self.workspacePath)
 
     def applySettings(self, settings: Settings) -> None:
@@ -223,6 +281,23 @@ class SessionWidget(QWidget):
 
         if self._agent.model != settings.model:
             self._agent.model = settings.model
+
+    def setWorkspacePath(self, path: str):
+        """
+        Update the agent workspace path and notify listeners.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._setWorkspacePathAsync(path))
+        except RuntimeError:
+            asyncio.run(self._setWorkspacePathAsync(path))
+
+    async def _setWorkspacePathAsync(self, path: str):
+        """
+        Async helper for applying workspace updates.
+        """
+        await self._agent.set_workspace(path)
+        self.workspaceChanged.emit(self.workspacePath)
 
 
 class MainWindow(QMainWindow):
@@ -245,7 +320,28 @@ class MainWindow(QMainWindow):
 
         self._status_bar = QStatusBar(self)
         self.setStatusBar(self._status_bar)
-        self._status_bar.showMessage("Workspace: <unknown>")
+        self._status_bar.setSizeGripEnabled(False)
+
+        self._status_widget = QWidget(self._status_bar)
+        status_layout = QHBoxLayout(self._status_widget)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(6)
+
+        self._workspace_button = QPushButton(
+            parent=self._status_widget,
+            flat=True,
+            icon=qtawesome.icon("mdi6.folder-outline", color="#505050"),
+            toolTip="Select workspace directory",
+            clicked=self._onSelectWorkspaceRequested,
+        )
+        status_layout.addWidget(self._workspace_button)
+
+        self._workspace_status_label = QLabel(self._status_widget)
+        status_layout.addWidget(self._workspace_status_label, 1)
+
+        self._status_bar.addWidget(self._status_widget, 1)
+
+        self._setWorkspaceStatusText("Workspace: <unknown>")
 
         self._new_session_action = QAction(qtawesome.icon("mdi6.plus", color='darkgreen'), "New Session", self)
         self._new_session_action.setToolTip("Open a new session tab")
@@ -334,7 +430,25 @@ class MainWindow(QMainWindow):
         Update status bar only for the currently selected session.
         """
         if self.sender() is self._tabs.currentWidget():
-            self._status_bar.showMessage(f"Workspace: {path}")
+            self._setWorkspaceStatusText(f"Workspace: {path}")
+
+    def _onSelectWorkspaceRequested(self):
+        """
+        Prompt for a workspace directory and apply it to the active session.
+        """
+        widget = self._tabs.currentWidget()
+        if not isinstance(widget, SessionWidget):
+            return
+
+        selected_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Workspace Directory",
+            widget.workspacePath,
+        )
+        if not selected_path:
+            return
+
+        widget.setWorkspacePath(selected_path)
 
     def _updateStatusBar(self) -> None:
         """
@@ -342,9 +456,16 @@ class MainWindow(QMainWindow):
         """
         widget = self._tabs.currentWidget()
         if isinstance(widget, SessionWidget):
-            self._status_bar.showMessage(f"Workspace: {widget.workspacePath}")
+            self._setWorkspaceStatusText(f"Workspace: {widget.workspacePath}")
         else:
-            self._status_bar.showMessage("Workspace: <unknown>")
+            self._setWorkspaceStatusText("Workspace: <unknown>")
+
+    def _setWorkspaceStatusText(self, text: str) -> None:
+        """
+        Update status text rendered by the custom status widget.
+        """
+        self._workspace_status_label.setText(text)
+        self._workspace_status_label.setToolTip(text)
 
     def addSessionTab(self) -> ChatWidget:
         """
@@ -372,10 +493,6 @@ class Application(QApplication):
     def __init__(self):
         super().__init__([])
 
-        if sys.platform == "win32":
-            import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('com.qassistant.app')
-
         self.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling)
         self.setApplicationName("qassistant")
         self.setDesktopFileName('qassistant')
@@ -393,5 +510,9 @@ def run_app():
     """
     Run the Qt application. This is intentionally minimal for scaffolding.
     """
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('com.qassistant.app')
+
     app = Application()
     QtAsyncio.run()
