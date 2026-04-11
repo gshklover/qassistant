@@ -12,13 +12,13 @@ import qtawesome
 import traceback
 
 
-from ..agent import Agent, Message, Role, TextContent, list_models
+from ..agent import Agent, AgentEventHandler, Message, Role, TextContent, list_models
 from .settings import Settings, SettingsDlg
 from .widgets import ChatWidget
 
 
 @contextmanager
-def WaitCursor():
+def wait_cursor():
     """
     Override the application cursor with an hourglass while inside the context.
     """
@@ -33,6 +33,33 @@ def WaitCursor():
         QApplication.restoreOverrideCursor()
 
 
+class _SessionStreamHandler(AgentEventHandler):
+    """
+    Bridge agent streaming events to the owning SessionWidget.
+    """
+
+    def __init__(self, widget: "SessionWidget"):
+        self._widget = widget
+
+    async def on_assistant_message_delta(self, delta_content, message_id, interaction_id):
+        if delta_content:
+            self._widget._onMessageDelta(delta_content)
+
+    async def on_assistant_message(self, content, message_id, interaction_id, reasoning_text, tool_requests):
+        if content:
+            self._widget._setAssistantMessage(content)
+
+    async def on_assistant_turn_end(self, turn_id):
+        self._widget._finalizeResponse()
+
+    async def on_session_idle(self, background_tasks):
+        self._widget._onSessionIdle()
+
+    async def on_session_error(self, error_type, message, error, status_code, url):
+        details = message or str(error) or "unknown session error"
+        self._widget._onSessionError(details)
+
+
 class SessionWidget(QWidget):
     """
     Widget representing a single agent session.
@@ -44,8 +71,14 @@ class SessionWidget(QWidget):
         super().__init__(parent=parent)
 
         self._settings = settings
-        self._agent = Agent(model=settings.model)
+        self._stream_handler = _SessionStreamHandler(self)
+        self._agent = Agent(model=settings.model, event_handlers=[self._stream_handler])
         self._chat_widget = ChatWidget(parent=self, sendRequested=self._onSendRequested, stopRequested=self._onStopRequested)
+        self._response_message: Message | None = None
+        self._response_text: TextContent | None = None
+        self._has_delta_content = False
+        self._aborted = False
+        self._prev_workspace_path = self._agent.workspace_path
 
         layout = QGridLayout(self)
         layout.addWidget(self._chat_widget, 0, 0)
@@ -70,48 +103,106 @@ class SessionWidget(QWidget):
         )
 
         # create a new placeholder for assisatant response and run the agent:
-        response_message = Message(role=Role.ASSISTANT, content=[], complete=False)
-        self._chat_widget.appendMessage(response_message)
+        self._response_text = TextContent(text="")
+        self._response_message = Message(role=Role.ASSISTANT, content=[self._response_text], complete=False)
+        self._chat_widget.appendMessage(self._response_message)
+        self._has_delta_content = False
+        self._aborted = False
+        self._prev_workspace_path = self._agent.workspace_path
 
         self._chat_widget.busy = True
-        asyncio.create_task(self._processRequest(message, response_message))
+        task = asyncio.create_task(self.submit(message))
+        task.add_done_callback(self._onSubmitDone)
 
     def _onStopRequested(self):
         """
         Handle stop requests from the UI and signal the agent to stop processing.
         """
         if self._agent.running:
+            self._aborted = True
             asyncio.create_task(self._agent.abort())
 
-    async def _processRequest(self, message: str, response_message: Message):
+    async def submit(self, message: str):
         """
-        Handle the agent response and update the UI in real-time.
+        Submit user message to the agent and rely on event callbacks for streamed updates.
         """
         if not self._agent.running:
             await self._agent.start()
 
-        prev_workspace = self._agent.workspace_path
+        await self._agent.submit(message=message)
 
+    def _onSubmitDone(self, task: asyncio.Task) -> None:
+        """
+        Handle immediate submission failures.
+        """
         try:
-            response = await self._agent.send(message=message)
+            task.result()
         except Exception as exc:
-            # error handling:
             traceback.print_exc()
-            response_message.content.append(TextContent(text=f"Error: {exc}"))
-        else:
-            if response is None:
-                # aborted response:
-                response_message.content.append(TextContent(text="<i>Aborted...</i>", format='html'))
-            else:
-                # regular response:
-                response_message.content.append(TextContent(text=response.data.content))
+            self._onSessionError(str(exc))
 
-        response_message.complete = True
-        self._chat_widget.updateMessage(response_message)
+    def _onMessageDelta(self, delta: str) -> None:
+        """
+        Append streamed assistant delta content to the active response message.
+        """
+        if self._response_message is None or self._response_text is None:
+            return
+
+        self._has_delta_content = True
+        self._response_text.text += delta
+        self._chat_widget.updateMessage(self._response_message)
+
+    def _setAssistantMessage(self, content: str) -> None:
+        """
+        Apply final assistant message content when no deltas were produced.
+        """
+        if self._response_message is None or self._response_text is None:
+            return
+
+        if not self._has_delta_content:
+            self._response_text.text = content
+            self._chat_widget.updateMessage(self._response_message)
+
+    def _onSessionError(self, details: str) -> None:
+        """
+        Render session errors inside the active assistant message.
+        """
+        if self._response_message is not None and self._response_text is not None:
+            if self._response_text.text:
+                self._response_text.text += "\n\n"
+            self._response_text.text += f"Error: {details}"
+        self._finalizeResponse()
+
+    def _onSessionIdle(self) -> None:
+        """
+        Session is idle; ensure the current response is finalized.
+        """
+        if self._response_message is not None and not self._response_message.complete:
+            self._finalizeResponse()
+
+    def _finalizeResponse(self) -> None:
+        """
+        Finalize current response and reset busy UI state.
+        """
+        if self._response_message is None:
+            self._chat_widget.busy = False
+            return
+
+        if self._aborted and self._response_text is not None and not self._response_text.text:
+            self._response_text.text = "<i>Aborted...</i>"
+            self._response_text.format = "html"
+
+        self._response_message.complete = True
+        self._chat_widget.updateMessage(self._response_message)
         self._chat_widget.busy = False
 
-        if self.workspacePath != prev_workspace:
+        if self.workspacePath != self._prev_workspace_path:
             self.workspaceChanged.emit(self.workspacePath)
+
+        self._response_message = None
+        self._response_text = None
+        self._has_delta_content = False
+        self._aborted = False
 
     def reset(self) -> None:
         """
@@ -190,7 +281,7 @@ class MainWindow(QMainWindow):
         Load available model ids prior to opening the settings dialog.
         """
         try:
-            with WaitCursor():
+            with wait_cursor():
                 models = await list_models()
             if not models:
                 models = [self._settings.model]
@@ -283,6 +374,7 @@ class Application(QApplication):
             myappid = 'com.qassistant.app'  # arbitrary string
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
+        self.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling)
         self.setApplicationName("qassistant")
         self.setDesktopFileName('qassistant')
         self.setApplicationVersion("0.0.1")

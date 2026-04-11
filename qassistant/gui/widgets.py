@@ -161,21 +161,8 @@ class ContentView(Generic[ContentT]):
         """
         Populate the view from a content object and register for change notifications.
         """
-        if self._content is not None:
-            self._content.property_changed.disconnect(self._onContentChanged)
-        
         self._content = content
-
-        if self._content is not None:
-            self._content.property_changed.connect(self._onContentChanged)
-            self._onUpdateContent(self._content)
-
-    def _onContentChanged(self, prop_name: str, prop_value: Any) -> None:
-        """
-        Handle content property changes by refreshing the view.
-        """
-        if self._content is not None:
-            self._onUpdateContent(self._content)
+        self._onUpdateContent(self._content)
 
     def _onUpdateContent(self, content: ContentT) -> None:
         """
@@ -356,20 +343,22 @@ class SectionContentView(QGroupBox, ContentView):
                 layout.addWidget(view)
 
 
+# Map content type to content view type
+_CONTENT_VIEW_TYPE_MAP = {
+    TextContent: TextContentView,
+    CodeContent: CodeContentView,
+    ImageContent: ImageContentView,
+    TableContent: TableContentView,
+    SectionContent: SectionContentView,
+}
+
 def _make_view(content: Content, parent: QWidget = None) -> ContentView | None:
     """
-    Factory to create a ContentView for given content object.
+    Factory to create a ContentView for given content object using the type map.
     """
-    if isinstance(content, TextContent):
-        return TextContentView(content=content, parent=parent)
-    if isinstance(content, CodeContent):
-        return CodeContentView(content=content, parent=parent)
-    if isinstance(content, ImageContent):
-        return ImageContentView(content=content, parent=parent)
-    if isinstance(content, TableContent):
-        return TableContentView(content=content, parent=parent)
-    if isinstance(content, SectionContent):
-        return SectionContentView(content=content, parent=parent)
+    view_cls = _CONTENT_VIEW_TYPE_MAP.get(type(content))
+    if view_cls is not None:
+        return view_cls(content=content, parent=parent)
     return None
 
 
@@ -397,30 +386,25 @@ class ChatMessageView(QWidget):
 
     def __init__(self, parent: QWidget | None = None, message: Message = None) -> None:
         super().__init__(parent)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         # Content column: holds all content views and the spinner
         self._content_widget = QWidget()
-        self._content_widget.setAttribute(Qt.WA_StyledBackground, True)
+        self._content_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._content_layout = QVBoxLayout(self._content_widget)
         self._content_layout.setContentsMargins(10, 8, 10, 8)
         self._content_layout.setSpacing(4)
 
-        # Spinner shown while the message is incomplete (streaming)
-        self._spinner = Spinner(parent=self._content_widget, size=24)
-        self._content_layout.addWidget(self._spinner, alignment=Qt.AlignLeft)
-        self._spinner.hide()
-
         # Role icon on the right
         self._icon_label = QLabel()
         self._icon_label.setFixedSize(_ROLE_ICON_SIZE, _ROLE_ICON_SIZE)
-        self._icon_label.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        self._icon_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
 
         # Outer layout: content + icon side by side
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 2, 0, 2)
         outer.setSpacing(6)
-        outer.addWidget(self._icon_label, 0, Qt.AlignTop)
+        outer.addWidget(self._icon_label, 0, Qt.AlignmentFlag.AlignTop)
         outer.addWidget(self._content_widget, 1)
 
         self._message = message
@@ -455,48 +439,39 @@ class ChatMessageView(QWidget):
 
     def updateContent(self, message: Message) -> None:
         """
-        Replace current contents with the content parts of the given message.
+        Incrementally update the content parts of the given message.
+        Only create or delete widgets if the content type or count changes; otherwise, update content on existing widgets.
         """
         self._applyRoleStyle(message.role)
-
         layout = self._content_layout
-        # clear existing widgets except the spinner
-        for i in reversed(range(layout.count())):
-            w = layout.itemAt(i).widget()
-            if w is not None and w is not self._spinner:
-                layout.takeAt(i)
-                w.setParent(None)
+        new_contents = message.content
+        old_widgets = [layout.itemAt(i).widget() for i in range(layout.count())]
 
-        for c in message.content:
-            view = _make_view(c)
-            if view:
-                view.updateContent(c)
-                layout.insertWidget(layout.indexOf(self._spinner), view)
-
-        # Show spinner (at the bottom) when the message is still streaming
-        if message.complete:
-            self._spinner.stop()
-            self._spinner.hide()
-        else:
-            self._spinner.show()
-            self._spinner.start()
-
-    def appendContent(self, content: Any) -> None:
-        """
-        Append content incrementally (useful for streaming).
-        """
-        view = _make_view(content)
-        if view:
-            view.updateContent(content)
-            # Insert before the spinner so it stays at the bottom
-            self._content_layout.insertWidget(self._content_layout.indexOf(self._spinner), view)
-
-    def _onStopRequested(self) -> None:
-        """
-        Emit a stop request for this message.
-        """
-        if self._message is not None:
-            self.stopRequested.emit(self._message)
+        reuse_count = min(len(new_contents), len(old_widgets))
+        for i in range(reuse_count):
+            content = new_contents[i]
+            widget = old_widgets[i]
+            expected_cls = _CONTENT_VIEW_TYPE_MAP.get(type(content))
+            if expected_cls and isinstance(widget, expected_cls):
+                widget.updateContent(content)
+            else:
+                layout.removeWidget(widget)
+                widget.setParent(None)
+                new_widget = _make_view(content)
+                if new_widget:
+                    new_widget.updateContent(content)
+                    layout.insertWidget(i, new_widget)
+        for i in range(len(old_widgets) - 1, len(new_contents) - 1, -1):
+            widget = old_widgets[i]
+            layout.removeWidget(widget)
+            widget.setParent(None)
+        for i in range(len(old_widgets), len(new_contents)):
+            content = new_contents[i]
+            new_widget = _make_view(content)
+            if new_widget:
+                new_widget.updateContent(content)
+                layout.addWidget(new_widget)
+        self._message = message
 
 
 class ChatHistoryView(QScrollArea):
@@ -510,50 +485,59 @@ class ChatHistoryView(QScrollArea):
     def __init__(self, parent: QWidget | None = None, stopRequested: Callable[[object], None] = None) -> None:
         super().__init__(parent)
         self.setWidgetResizable(True)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         container = QWidget()
-        container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._container_layout = QVBoxLayout(container)
-        self._container_layout.setAlignment(Qt.AlignTop)
+        self._container_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         container.setLayout(self._container_layout)
         self.setWidget(container)
-        
+        self._message_map: dict[int, ChatMessageView] = {}
         if stopRequested is not None:
             self.stopRequested.connect(stopRequested)
 
-    def appendMessage(self, message_view: ChatMessageView) -> None:
+    def appendMessage(self, message: Message) -> ChatMessageView:
         """
-        Add a ChatMessageView to the history, aligned by role:
-        user → right, assistant (and others) → left.
+        Create a ChatMessageView for the given message and add it to the history, aligned by role.
+        Returns the created ChatMessageView.
         """
+        message_view = ChatMessageView(message=message)
+        self._message_map[id(message)] = message_view
         row = QHBoxLayout()
         row.setContentsMargins(0, 2, 0, 2)
         row.setSpacing(0)
-        message_view.setMaximumWidth(9999)  # reset any previous constraint
-        spacer = QSpacerItem(0, 0, QSizePolicy.Expanding, QSizePolicy.Minimum)
+        message_view.setMaximumWidth(9999)
+        spacer = QSpacerItem(0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         if message_view.role() == "user":
             row.addSpacerItem(spacer)
             row.addWidget(message_view, 4)
         else:
             row.addWidget(message_view, 4)
             row.addSpacerItem(spacer)
-
-        # Wrap the row layout in a QWidget so it can live in the container layout
         row_widget = QWidget()
         row_widget.setLayout(row)
         self._container_layout.addWidget(row_widget)
         message_view.stopRequested.connect(self.stopRequested.emit)
-        # auto-scroll:
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+        return message_view
+
+    def updateMessage(self, message: Message) -> None:
+        """
+        Update an existing ChatMessageView with new message content using the message map.
+        """
+        view = self._message_map.get(id(message))
+        if view is not None:
+            view.updateContent(message)
 
     def clear(self) -> None:
         """
-        Remove all messages from history.
+        Remove all messages from history and clear the message map.
         """
         while self._container_layout.count():
             w = self._container_layout.takeAt(0).widget()
             if w is not None:
                 w.setParent(None)
+        self._message_map.clear()
 
 
 class TextAutoCompleter:
@@ -945,18 +929,14 @@ class ChatWidget(QWidget):
         """
         Create a ChatMessageView for the given message and add it to the history.
         """
-        view = ChatMessageView(message=message)
-        self._messageHistory.appendMessage(view)
-        return view
+        return self._messageHistory.appendMessage(message)
 
     def updateMessage(self, message: Message) -> None:
         """
-        Update an existing ChatMessageView with new message content. 
+        Update an existing ChatMessageView with new message content.
         Useful for streaming updates.
         """
-        for view in self._messageHistory.findChildren(ChatMessageView):
-            if view.role() == message.role and view.message is message:
-                view.updateContent(message)
+        self._messageHistory.updateMessage(message)
 
     def removeMessage(self, message: Message) -> None:
         """

@@ -2,16 +2,15 @@
 Agent implementation. Provides a small adapter around GenAI SDK and tool execution.
 """
 import asyncio
+import copilot
+from copilot.generated.session_events import SessionEventType
 import dataclasses
 import inspect
 import functools
+from openai import AsyncOpenAI
 import os
 import traceback
 from typing import Callable
-
-import copilot
-from copilot.generated.session_events import SessionEventType
-from openai import AsyncOpenAI
 
 from .common import AgentEventHandler, BaseAgent
 from .tools.pythonshell import PythonShell
@@ -215,7 +214,7 @@ class Agent(BaseAgent):
         self._model = model
         self._shell = PythonShell()  # shared python shell instance for tool execution
         self._session = None
-        self._work_area = os.getcwd()
+        self._workspace_path = os.getcwd()
         self._tools = [
             # execution shell:
             as_tool(self._shell.execute, name='pyshell_execute'),
@@ -257,7 +256,7 @@ class Agent(BaseAgent):
         """
         Return current work area used by the session shell.
         """
-        return self._work_area
+        return self._workspace_path
 
     async def start(self):
         """
@@ -297,8 +296,17 @@ class Agent(BaseAgent):
             raise RuntimeError("Agent is not running. Call start() first.")
 
         res = await self._session.send_and_wait(message, timeout=DEFAULT_TIMEOUT)
-        self._work_area = self._session.workspace_path
         return res
+
+    async def submit(self, message: str) -> str:
+        """
+        Submit a message to the agent and return immediately with the message ID.
+        Response chunks and completion are delivered through registered event handlers.
+        """
+        if not self._session:
+            raise RuntimeError("Agent is not running. Call start() first.")
+
+        return await self._session.send(message)
 
     async def abort(self):
         """
@@ -349,7 +357,7 @@ class Agent(BaseAgent):
                 except Exception:
                     traceback.print_exc()
 
-    def _on_event(self, event: copilot.SessionEvent):
+    def _on_event(self, event: copilot.session.SessionEvent):
         """
         Session callback that logs non-streaming events and dispatches to handlers.
         """

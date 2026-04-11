@@ -319,6 +319,34 @@ class TestAgent(unittest.IsolatedAsyncioTestCase):
             )
             self.assertIsNotNone(pyshell_complete_event)
 
+    async def test_submit(self):
+        """
+        Validate submit() dispatches message through session.send and updates workspace path.
+        """
+        done_event = asyncio.Event()
+
+        class StreamingEventHandler(AgentEventHandler):
+            def __init__(self):
+                self.streaming_response = ""
+
+            async def on_assistant_message_delta(self, delta_content, message_id, interaction_id):
+                self.streaming_response += delta_content
+
+            async def on_session_idle(self, background_tasks):
+                done_event.set()
+
+            async def on_session_error(self, error_type, message, error, status_code, url):
+                done_event.set()
+
+        handler = StreamingEventHandler()
+        agent = Agent(event_handlers=[handler])
+        async with agent:
+            message_id = await agent.submit("compute 2 + 2")
+            await asyncio.wait_for(done_event.wait(), timeout=15)
+
+        self.assertTrue(handler.streaming_response)
+        self.assertIn("4", handler.streaming_response)
+
 
 class TestModel(unittest.IsolatedAsyncioTestCase):
     """

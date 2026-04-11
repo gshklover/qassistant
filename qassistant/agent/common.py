@@ -5,8 +5,8 @@ Defines the BaseAgent interface used by concrete Agent implementations.
 """
 from abc import ABC, abstractmethod
 import dataclasses
-import traceback
 import pandas
+import traceback
 from typing import Any, Callable, Generic, TypeVarTuple
 
 
@@ -264,18 +264,19 @@ class BaseAgent(ABC):
         Send a message to the agent and return a response object.
         """
 
+    @abstractmethod
+    async def submit(self, message: str) -> Any:
+        """
+        Submit a message to the agent and return immediately while streaming events continue asynchronously.
+        """
+
 
 @dataclasses.dataclass(slots=True)
-class Content(IObservable):
+class Content:
     """
     Base content unit for a rich message.
     """
     metadata: dict[str, Any] = None
-
-    def __setattr__(self, name, value):
-        res = super().__setattr__(name, value)
-        self._on_property_changed(name, value)
-        return res
 
 
 @dataclasses.dataclass(slots=True)
@@ -301,7 +302,7 @@ class ImageContent(Content):
     """
     Image content unit.
     """
-    image_data: bytes = dataclasses.field(default_factory=bytes)  # raw image data
+    image_data: bytes = dataclasses.field(default_factory=lambda: b'')  # raw image data
     format: str = "png"  # e.g. "png", "jpeg"
     alt_text: str | None = None  # optional alt text for accessibility
 
@@ -343,7 +344,7 @@ class Role(str):
 
 
 @dataclasses.dataclass(slots=True)
-class Message(IObservable):
+class Message:
     """
     Standardized message format for agent communication.
     """
@@ -354,7 +355,6 @@ class Message(IObservable):
 
     def append(self, content: Content):
         """
-        Append new content to the message and emit a change signal.
+        Append new content to the message.
         """
         self.content.append(content)
-        self._on_property_changed('content', self.content)
