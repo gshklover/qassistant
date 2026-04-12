@@ -324,8 +324,8 @@ class MainWindow(QMainWindow):
 
         self._status_widget = QWidget(self._status_bar)
         status_layout = QHBoxLayout(self._status_widget)
-        status_layout.setContentsMargins(0, 0, 0, 0)
-        status_layout.setSpacing(6)
+        status_layout.setContentsMargins(1, 1, 1, 1)
+        status_layout.setSpacing(3)
 
         self._workspace_button = QPushButton(
             parent=self._status_widget,
@@ -333,6 +333,11 @@ class MainWindow(QMainWindow):
             icon=qtawesome.icon("mdi6.folder-outline", color="#505050"),
             toolTip="Select workspace directory",
             clicked=self._onSelectWorkspaceRequested,
+        )
+        self._workspace_button.setStyleSheet(
+            "QPushButton { background-color: transparent; border: none; padding: 0px; }"
+            "QPushButton:hover { background-color: transparent; border: none; }"
+            "QPushButton:pressed { background-color: transparent; border: none; }"
         )
         status_layout.addWidget(self._workspace_button)
 

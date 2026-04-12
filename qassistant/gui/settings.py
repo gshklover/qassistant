@@ -2,7 +2,7 @@
 Settings model and editor widgets for the qassistant GUI.
 """
 from PySide6.QtCore import QSignalBlocker, Signal as QtSignal
-from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QFormLayout, QPushButton, QVBoxLayout, QWidget
 
 from ..agent.common import IObservable
 
@@ -87,13 +87,9 @@ class SettingsView(QWidget):
 		self._settings: Settings | None = None
 		self._model_combo_box = QComboBox(self)
 		self._model_combo_box.setObjectName("modelComboBox")
-		self._model_combo_box.setEditable(True)
+		self._model_combo_box.setEditable(False)
 		self._model_combo_box.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
 		self._model_combo_box.currentTextChanged.connect(self._onModelChanged)
-
-		line_edit = self._model_combo_box.lineEdit()
-		if isinstance(line_edit, QLineEdit):
-			line_edit.setPlaceholderText("Enter model name")
 
 		layout = QFormLayout(self)
 		layout.addRow("Model", self._model_combo_box)
@@ -134,11 +130,12 @@ class SettingsView(QWidget):
 			self._model_combo_box.clear()
 
 			if self._settings is None:
-				self._model_combo_box.setCurrentText("")
+				self._model_combo_box.setCurrentIndex(-1)
 				return
 
 			self._model_combo_box.addItems(self._settings.available_models)
-			self._model_combo_box.setCurrentText(self._settings.model)
+			model_index = self._model_combo_box.findText(self._settings.model)
+			self._model_combo_box.setCurrentIndex(model_index)
 		finally:
 			del blocker
 

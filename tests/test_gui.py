@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QComboBox, QDialogButtonBox, QPushButton, QTextEdit
 
 from qassistant.agent.common import TextContent
+from qassistant.gui.application import MainWindow
 from qassistant.gui.settings import Settings, SettingsDlg, SettingsView
 from qassistant.gui.widgets import TextContentView
 
@@ -52,19 +53,21 @@ class TestSettingsWidgets(unittest.TestCase):
 
     def test_settings_view_updates_bound_settings(self):
         """
-        Editing the combo box updates the bound Settings object and vice versa.
+        Selecting listed models updates the bound Settings object and the combo box is not editable.
         """
         settings = Settings(model="gpt-4.1", available_models=["gpt-4.1", "gpt-5"])
         view = SettingsView(settings)
         combo_box = view.findChild(QComboBox, "modelComboBox")
 
+        self.assertFalse(combo_box.isEditable())
         combo_box.setCurrentText("gpt-5")
         self.application.processEvents()
         self.assertEqual(settings.model, "gpt-5")
 
-        settings.model = "custom-model"
+        settings.model = "missing-model"
         self.application.processEvents()
-        self.assertEqual(combo_box.currentText(), "custom-model")
+        self.assertEqual(combo_box.currentIndex(), -1)
+        self.assertEqual(combo_box.currentText(), "")
 
     def test_dialog_accept_applies_changes(self):
         """
@@ -103,6 +106,8 @@ class TestSettingsWidgets(unittest.TestCase):
         self.assertEqual(settings.model, "gpt-4.1")
 
         combo_box.setCurrentText("custom-model")
+        self.application.processEvents()
+        self.assertEqual(combo_box.currentText(), "")
         button_box.button(QDialogButtonBox.StandardButton.Cancel).click()
         self.application.processEvents()
 
@@ -212,3 +217,27 @@ class TestWorkspaceView(unittest.TestCase):
             view._onItemActivated(index)
 
             self.assertEqual(received, [str(test_file)])
+
+
+class TestMainWindow(unittest.TestCase):
+    """
+    Validate main window UI details.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.application = QApplication.instance() or QApplication([])
+
+    def test_workspace_button_stays_flat_on_hover(self):
+        """
+        Workspace button should stay flat with transparent hover and pressed styling.
+        """
+        window = MainWindow()
+        button = window.findChild(QPushButton, "workspaceSelectButton")
+
+        self.assertIsNotNone(button)
+        self.assertTrue(button.isFlat())
+        self.assertIn("QPushButton:hover { background-color: transparent; border: none; }", button.styleSheet())
+        self.assertIn("QPushButton:pressed { background-color: transparent; border: none; }", button.styleSheet())
+
+

@@ -889,8 +889,8 @@ class SpinnerButton(QPushButton):
     Button that can render an animated spinner ring while in busy state.
     """
 
-    def __init__(self, parent: QWidget | None = None, color: str = "#808080") -> None:
-        super().__init__(parent=parent)
+    def __init__(self, parent: QWidget | None = None, color: str = "#808080", **kwargs) -> None:
+        super().__init__(parent=parent, **kwargs)
         self._busy = False
         self._angle = 0.0
         self._ring_width = 4
@@ -977,12 +977,13 @@ class EditBox(QWidget):
         self._edit.setFixedHeight(approx_height)
 
         # Single button: shows send icon normally, stop icon when busy
-        self._send_btn = SpinnerButton(parent=self)
-        self._send_btn.setEnabled(False)
-        self._send_btn.setFlat(True)
+        self._send_btn = SpinnerButton(
+            parent=self, enabled=False, flat=True,
+            clicked=self._onButtonClicked,
+            icon=qtawesome.icon("mdi6.send", active="mdi6.send", color="#808080", disabled="mdi6.comment-multiple-outline")
+        )
         self._send_btn.setIconSize(QSize(48, 48))
-        self._send_btn.setIcon(qtawesome.icon("mdi6.send", active="mdi6.send", color="#808080", disabled="mdi6.comment-multiple-outline"))
-        self._send_btn.clicked.connect(self._onButtonClicked)
+        self._send_btn.setFixedSize(56, 56)
 
         # Layout the edit and the button next to each other
         layout = QGridLayout(self)
