@@ -31,6 +31,7 @@ class _RecordingEventsHandler(AgentEventHandler):
         self.session_idle_events = []
         self.session_task_complete_events = []
         self.session_error_events = []
+        self.session_usage_events = []
         self.unknown_events = []
         self.user_message_events = []
         self.idle_event = asyncio.Event()
@@ -132,6 +133,11 @@ class _RecordingEventsHandler(AgentEventHandler):
             "url": url,
         })
 
+    async def on_session_usage(self, usage_percentage):
+        self.session_usage_events.append({
+            "usage_percentage": usage_percentage,
+        })
+
     async def on_unknown_event(self, event_type, event):
         self.unknown_events.append({
             "event_type": event_type,
@@ -207,11 +213,60 @@ class TestAgent(unittest.IsolatedAsyncioTestCase):
             ),
         ))
 
+        await agent._handle_event(SimpleNamespace(
+            type=SessionEventType.SESSION_USAGE_INFO,
+            data=SimpleNamespace(
+                token_limit=200000.0,
+                current_tokens=50000.0,
+                messages_length=10.0,
+            ),
+        ))
+
         self.assertEqual(handler.tool_execution_start_events[0]["tool_name"], "view")
         self.assertEqual(handler.tool_execution_start_events[0]["arguments"], {"path": "/tmp"})
         self.assertEqual(handler.assistant_message_delta_events[0]["delta_content"], "chunk")
         self.assertEqual(handler.assistant_reasoning_delta_events[0]["delta_content"], "thought")
         self.assertTrue(handler.tool_execution_complete_events[0]["success"])
+        self.assertEqual(len(handler.session_usage_events), 1)
+        self.assertAlmostEqual(handler.session_usage_events[0]["usage_percentage"], 25.0)
+
+    async def test_dispatch_session_usage_high_utilization(self):
+        """
+        Validate that usage_percentage is correctly computed from current_tokens / token_limit.
+        """
+        handler = _RecordingEventsHandler()
+        agent = Agent(event_handlers=[handler])
+
+        await agent._handle_event(SimpleNamespace(
+            type=SessionEventType.SESSION_USAGE_INFO,
+            data=SimpleNamespace(
+                token_limit=100000.0,
+                current_tokens=80000.0,
+                messages_length=25.0,
+            ),
+        ))
+
+        self.assertEqual(len(handler.session_usage_events), 1)
+        self.assertAlmostEqual(handler.session_usage_events[0]["usage_percentage"], 80.0)
+
+    async def test_dispatch_session_usage_zero_token_limit(self):
+        """
+        Validate that usage_percentage is 0.0 when token_limit is zero.
+        """
+        handler = _RecordingEventsHandler()
+        agent = Agent(event_handlers=[handler])
+
+        await agent._handle_event(SimpleNamespace(
+            type=SessionEventType.SESSION_USAGE_INFO,
+            data=SimpleNamespace(
+                token_limit=0.0,
+                current_tokens=0.0,
+                messages_length=0.0,
+            ),
+        ))
+
+        self.assertEqual(len(handler.session_usage_events), 1)
+        self.assertAlmostEqual(handler.session_usage_events[0]["usage_percentage"], 0.0)
 
     async def test_list_tmp_emits_tool_and_streaming_events(self):
         """

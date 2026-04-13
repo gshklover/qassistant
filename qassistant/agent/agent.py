@@ -166,6 +166,13 @@ _EVENT_METHOD_BY_TYPE = {
             "url": "url",
         },
     ),
+    SessionEventType.SESSION_USAGE_INFO: (
+        "on_session_usage", {
+            "token_limit": "token_limit",
+            "current_tokens": "current_tokens",
+            "messages_length": "messages_length",
+        },
+    ),
     SessionEventType.USER_MESSAGE: (
         "on_user_message", {
             "content": "content",
@@ -231,6 +238,7 @@ class Agent(BaseAgent):
             tools=self._tools,
             streaming=True,
         )
+        self._usage = 0
 
     @property
     def model(self) -> str:
@@ -260,6 +268,13 @@ class Agent(BaseAgent):
         Return current work area used by the session shell.
         """
         return self._workspace_path
+
+    @property
+    def usage(self) -> float:
+        """
+        Returns the current session usage percentage.
+        """
+        return self._usage
 
     async def start(self, session_id: str = None):
         """
@@ -366,6 +381,15 @@ class Agent(BaseAgent):
             arg_name: getattr(event.data, attr_name, None)
             for arg_name, attr_name in attributes.items()
         }
+
+        # Transform SESSION_USAGE_INFO into a single usage_percentage
+        if event.type == SessionEventType.SESSION_USAGE_INFO:
+            token_limit = args.pop("token_limit", None) or 0.0
+            current_tokens = args.pop("current_tokens", None) or 0.0
+            args.pop("messages_length", None)
+            usage_percentage = (current_tokens / token_limit * 100.0) if token_limit > 0 else 0.0
+            args = {"usage_percentage": usage_percentage}
+            self._usage = usage_percentage
 
         for event_handler in self._event_handlers:
             handler_method = getattr(event_handler, method_name, None)

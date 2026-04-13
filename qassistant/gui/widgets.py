@@ -4,8 +4,8 @@ QAssistant GUI widgets: content views, chat history and chat widget.
 import markdown
 import os
 from pathlib import Path
-from PySide6.QtCore import QPoint, Qt, Signal, QSize, QTimer
-from PySide6.QtGui import QKeyEvent, QPixmap, QFont, QFontMetrics, QPainter, QConicalGradient, QColor, QPen, QTextCursor
+from PySide6.QtCore import QPoint, QRectF, Qt, Signal, QSize, QTimer
+from PySide6.QtGui import QBrush, QKeyEvent, QPixmap, QFont, QFontMetrics, QPainter, QConicalGradient, QColor, QPen, QTextCursor
 from PySide6.QtWidgets import (
     QWidget,
     QTextEdit,
@@ -147,6 +147,88 @@ class Spinner(QWidget):
             angle=self._angle,
             color=self._color,
         )
+        painter.end()
+
+
+class UsagePieWidget(QWidget):
+    """
+    Compact circular pie indicator with a percentage label.
+
+    Displays a filled pie arc proportional to the usage percentage,
+    with the numeric value rendered to the right.
+    """
+
+    _PIE_SIZE = 16
+    _LABEL_SPACING = 4
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        fill_color: str = "#5080ff",
+        track_color: str = "#d0d0d0",
+    ) -> None:
+        super().__init__(parent)
+        self._percentage: float = 0.0
+        self._fill_color = QColor(fill_color)
+        self._track_color = QColor(track_color)
+
+        self._label = QLabel("0%", self)
+        self._label.setStyleSheet("color: #606060; font-size: 11px;")
+        self._label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 0, 4, 0)
+
+        # Reserve space for the pie circle painted in paintEvent
+        self._pie_spacer = QSpacerItem(
+            self._PIE_SIZE, self._PIE_SIZE,
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed,
+        )
+        layout.addItem(self._pie_spacer)
+        layout.addSpacing(self._LABEL_SPACING)
+        layout.addWidget(self._label)
+
+    @property
+    def percentage(self) -> float:
+        """
+        Return the current usage percentage.
+        """
+        return self._percentage
+
+    @percentage.setter
+    def percentage(self, value: float):
+        """
+        Set the usage percentage (0.0–100.0) and update the display.
+        """
+        self._percentage = max(0.0, min(100.0, value))
+        self._label.setText(f"{self._percentage:.0f}%")
+        self._label.setToolTip(f"Context window: {self._percentage:.1f}%")
+        self.update()
+
+    def paintEvent(self, event) -> None:  # pragma: no cover - UI
+        """
+        Draw the pie circle at the spacer position.
+        """
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Position the pie at the spacer item's geometry
+        pie_rect = QRectF(self._pie_spacer.geometry())
+
+        # Draw background track (full circle)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self._track_color))
+        painter.drawEllipse(pie_rect)
+
+        # Draw filled arc (clockwise from 12 o'clock)
+        if self._percentage > 0:
+            # Qt angles are in 1/16th of a degree, starting at 3 o'clock going counter-clockwise.
+            # To start at 12 o'clock and go clockwise: start at 90° and sweep negative.
+            start_angle = 90 * 16
+            span_angle = -int(self._percentage / 100.0 * 360.0 * 16)
+            painter.setBrush(QBrush(self._fill_color))
+            painter.drawPie(pie_rect, start_angle, span_angle)
+
         painter.end()
 
 

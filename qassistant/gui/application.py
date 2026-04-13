@@ -6,7 +6,8 @@ from contextlib import contextmanager
 import sys
 from PySide6.QtCore import QSize, Signal
 from PySide6.QtGui import QAction, Qt
-from PySide6.QtWidgets import QApplication, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMainWindow, QPushButton, QStatusBar, QTabWidget, QToolBar, QWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMainWindow, QPushButton, QStatusBar, QTabWidget, QToolBar, \
+    QWidget, QSizePolicy
 import PySide6.QtAsyncio as QtAsyncio
 import qtawesome
 import traceback
@@ -14,7 +15,7 @@ import traceback
 from ..agent import Agent, AgentEventHandler, Message, Role, TextContent, list_models
 from .settings import Settings, SettingsDlg
 from .._version import __version__
-from .widgets import ChatWidget
+from .widgets import ChatWidget, UsagePieWidget
 from ..agent.common import MessageState, ToolCallContent
 
 
@@ -70,6 +71,9 @@ class _SessionStreamHandler(AgentEventHandler):
         details = message or str(error) or "unknown session error"
         self._widget._onSessionError(details)
 
+    async def on_session_usage(self, usage_percentage):
+        self._widget._onSessionUsage(usage_percentage)
+
 
 class SessionWidget(QWidget):
     """
@@ -77,6 +81,7 @@ class SessionWidget(QWidget):
     """
 
     workspaceChanged = Signal(str)
+    usageChanged = Signal(float)
 
     def __init__(self, settings: Settings, parent: QWidget = None, workspace_path: str = ""):
         super().__init__(parent=parent)
@@ -102,6 +107,13 @@ class SessionWidget(QWidget):
         Return current workspace path for this session.
         """
         return self._agent.workspace_path
+
+    @property
+    def usage(self) -> float:
+        """
+        Return the current context window usage percentage for this session.
+        """
+        return self._agent.usage
 
     def _onSendRequested(self, message: str):
         """
@@ -235,6 +247,12 @@ class SessionWidget(QWidget):
             response_text.text += f"Error: {details}"
         self._finalizeResponse()
 
+    def _onSessionUsage(self, usage_percentage: float):
+        """
+        Forward session usage percentage to listeners.
+        """
+        self.usageChanged.emit(usage_percentage)
+
     def _onSessionIdle(self) -> None:
         """
         Session is idle; ensure the current response is finalized.
@@ -318,6 +336,31 @@ class MainWindow(QMainWindow):
         self._tool_bar.setIconSize(QSize(32, 32))
         self.addToolBar(self._tool_bar)
 
+        spacer = QWidget(self._tool_bar)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._tool_bar.addWidget(spacer)
+
+        self._new_session_action = QAction(qtawesome.icon("mdi6.plus", color='darkgreen'), "New Session", self)
+        self._new_session_action.setToolTip("Open a new session tab")
+        self._new_session_action.triggered.connect(self.addSessionTab)
+        self._tool_bar.addAction(self._new_session_action)
+
+        self._reset_session_action = QAction(qtawesome.icon("mdi6.refresh", color='darkred'), "Reset", self)
+        self._reset_session_action.setToolTip("Reset the current session")
+        self._reset_session_action.triggered.connect(self._onResetSession)
+        self._tool_bar.addAction(self._reset_session_action)
+
+        self._tool_bar.addSeparator()
+
+        self._settings_action = QAction(qtawesome.icon("mdi6.cog-outline", color='#404040'), "Settings", self)
+        self._settings_action.setToolTip("Open application settings")
+        self._settings_action.triggered.connect(self._onSettingsRequested)
+        self._tool_bar.addAction(self._settings_action)
+
+        spacer = QWidget(self._tool_bar)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._tool_bar.addWidget(spacer)
+
         self._status_bar = QStatusBar(self)
         self.setStatusBar(self._status_bar)
         self._status_bar.setSizeGripEnabled(False)
@@ -342,28 +385,15 @@ class MainWindow(QMainWindow):
         status_layout.addWidget(self._workspace_button)
 
         self._workspace_status_label = QLabel(self._status_widget)
+        self._workspace_status_label.setMinimumWidth(0)
         status_layout.addWidget(self._workspace_status_label, 1)
+
+        self._usage_indicator = UsagePieWidget(parent=self._status_widget)
+        status_layout.addWidget(self._usage_indicator)
 
         self._status_bar.addWidget(self._status_widget, 1)
 
         self._setWorkspaceStatusText("Workspace: <unknown>")
-
-        self._new_session_action = QAction(qtawesome.icon("mdi6.plus", color='darkgreen'), "New Session", self)
-        self._new_session_action.setToolTip("Open a new session tab")
-        self._new_session_action.triggered.connect(self.addSessionTab)
-        self._tool_bar.addAction(self._new_session_action)
-
-        self._reset_session_action = QAction(qtawesome.icon("mdi6.refresh", color='darkred'), "Reset", self)
-        self._reset_session_action.setToolTip("Reset the current session")
-        self._reset_session_action.triggered.connect(self._onResetSession)
-        self._tool_bar.addAction(self._reset_session_action)
-
-        self._tool_bar.addSeparator()
-
-        self._settings_action = QAction(qtawesome.icon("mdi6.cog-outline", color='#404040'), "Settings", self)
-        self._settings_action.setToolTip("Open application settings")
-        self._settings_action.triggered.connect(self._onSettingsRequested)
-        self._tool_bar.addAction(self._settings_action)
 
     def _onResetSession(self) -> None:
         """
@@ -439,6 +469,13 @@ class MainWindow(QMainWindow):
         if path:
             self._settings.workspace_path = path
 
+    def _onSessionUsageChanged(self, usage_percentage: float):
+        """
+        Update the usage pie indicator in the status bar when the active session reports context window utilization.
+        """
+        if self.sender() is self._tabs.currentWidget():
+            self._usage_indicator.percentage = usage_percentage
+
     def _onSelectWorkspaceRequested(self):
         """
         Prompt for a workspace directory and apply it to the active session.
@@ -459,13 +496,15 @@ class MainWindow(QMainWindow):
 
     def _updateStatusBar(self) -> None:
         """
-        Display current session work area in the status bar.
+        Display current session work area and usage in the status bar.
         """
         widget = self._tabs.currentWidget()
         if isinstance(widget, SessionWidget):
             self._setWorkspaceStatusText(f"Workspace: {widget.workspacePath}")
+            self._usage_indicator.percentage = widget.usage
         else:
             self._setWorkspaceStatusText("Workspace: <unknown>")
+            self._usage_indicator.percentage = 0.0
 
     def _setWorkspaceStatusText(self, text: str) -> None:
         """
@@ -482,6 +521,7 @@ class MainWindow(QMainWindow):
         stored_path = self._settings.workspace_path
         chat_widget = SessionWidget(settings=self._settings, parent=self._tabs, workspace_path=stored_path)
         chat_widget.workspaceChanged.connect(self._onSessionWorkAreaChanged)
+        chat_widget.usageChanged.connect(self._onSessionUsageChanged)
         self._tabs.addTab(chat_widget, qtawesome.icon('mdi6.comment-multiple-outline'), f"Session {n}")
         self._tabs.setCurrentWidget(chat_widget)
 

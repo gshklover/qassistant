@@ -204,6 +204,14 @@ class AgentEventHandler(ABC):
         """
         return
 
+    async def on_session_usage(self, usage_percentage: float):
+        """
+        Emitted when session usage information is received.
+        The usage_percentage is a float between 0.0 and 100.0 indicating
+        the context window utilization (current_tokens / token_limit).
+        """
+        return
+
     async def on_unknown_event(self, event_type: str, event: Any):
         """
         Handle any event type that has no dedicated hook.
