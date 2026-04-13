@@ -209,6 +209,7 @@ class Agent(BaseAgent):
         model: str = DEFAULT_MODEL,
         tools: list[str | Callable] | None = None,
         event_handlers: list[AgentEventHandler] | None = None,
+        workspace_path: str = "",
     ):
         """
         Initialize the agent with the specified model, tools, and event handlers.
@@ -216,7 +217,7 @@ class Agent(BaseAgent):
         self._model = model
         self._shell = PythonShell()  # shared python shell instance for tool execution
         self._session = None
-        self._workspace_path = os.getcwd()
+        self._workspace_path = workspace_path or os.getcwd()
         self._tools = [
             # execution shell:
             as_tool(self._shell.execute, name='python_shell_execute'),

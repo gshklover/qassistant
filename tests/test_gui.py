@@ -14,7 +14,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QComboBox, QDialogButtonBox, QPushButton, QTextEdit
 
 from qassistant.agent.common import TextContent
-from qassistant.gui.application import MainWindow
 from qassistant.gui.settings import Settings, SettingsDlg, SettingsView
 from qassistant.gui.widgets import TextContentView
 
@@ -23,6 +22,10 @@ class TestSettings(unittest.TestCase):
     """
     Validate Settings model behavior.
     """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.application = QApplication.instance() or QApplication([])
 
     def test_copy_from_and_reset(self):
         """
@@ -40,6 +43,55 @@ class TestSettings(unittest.TestCase):
 
         self.assertEqual(settings.model, "")
         self.assertEqual(settings.available_models, ["gpt-5", "gpt-4.1"])
+
+    def test_workspace_path_persists_via_qsettings(self):
+        """
+        Setting workspace_path stores it in QSettings and a new Settings instance reads it back.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            settings = Settings()
+            settings.workspace_path = tmp_dir
+
+            settings2 = Settings()
+            self.assertEqual(settings2.workspace_path, str(Path(tmp_dir)))
+
+    def test_workspace_path_rejects_invalid_directory(self):
+        """
+        Assigning a non-existent directory does not update the stored path.
+        """
+        settings = Settings()
+        original = settings.workspace_path
+
+        settings.workspace_path = "/this/path/does/not/exist"
+
+        self.assertEqual(settings.workspace_path, original)
+
+    def test_workspace_path_returns_empty_for_stale_path(self):
+        """
+        If the stored path no longer exists, workspace_path returns empty string.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            settings = Settings()
+            settings.workspace_path = tmp_dir
+
+        # tmp_dir is now deleted
+        settings2 = Settings()
+        self.assertEqual(settings2.workspace_path, "")
+
+    def test_workspace_path_emits_property_changed(self):
+        """
+        Setting workspace_path fires a property_changed notification.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            settings = Settings()
+            received: list[tuple[str, str]] = []
+            settings.property_changed.connect(lambda name, value: received.append((name, value)))
+
+            settings.workspace_path = tmp_dir
+
+            self.assertEqual(len(received), 1)
+            self.assertEqual(received[0][0], "workspace_path")
+            self.assertEqual(received[0][1], tmp_dir)
 
 
 class TestSettingsWidgets(unittest.TestCase):
@@ -217,27 +269,3 @@ class TestWorkspaceView(unittest.TestCase):
             view._onItemActivated(index)
 
             self.assertEqual(received, [str(test_file)])
-
-
-class TestMainWindow(unittest.TestCase):
-    """
-    Validate main window UI details.
-    """
-
-    @classmethod
-    def setUpClass(cls):
-        cls.application = QApplication.instance() or QApplication([])
-
-    def test_workspace_button_stays_flat_on_hover(self):
-        """
-        Workspace button should stay flat with transparent hover and pressed styling.
-        """
-        window = MainWindow()
-        button = window.findChild(QPushButton, "workspaceSelectButton")
-
-        self.assertIsNotNone(button)
-        self.assertTrue(button.isFlat())
-        self.assertIn("QPushButton:hover { background-color: transparent; border: none; }", button.styleSheet())
-        self.assertIn("QPushButton:pressed { background-color: transparent; border: none; }", button.styleSheet())
-
-

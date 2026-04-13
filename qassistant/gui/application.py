@@ -78,12 +78,12 @@ class SessionWidget(QWidget):
 
     workspaceChanged = Signal(str)
 
-    def __init__(self, settings: Settings, parent: QWidget = None):
+    def __init__(self, settings: Settings, parent: QWidget = None, workspace_path: str = ""):
         super().__init__(parent=parent)
 
         self._settings = settings
         self._stream_handler = _SessionStreamHandler(self)
-        self._agent = Agent(model=settings.model, event_handlers=[self._stream_handler])
+        self._agent = Agent(model=settings.model, event_handlers=[self._stream_handler], workspace_path=workspace_path)
         self._chat_widget = ChatWidget(parent=self, sendRequested=self._onSendRequested, stopRequested=self._onStopRequested)
         self._response_message: Message | None = None
         self._tool_call_content_map: dict[str, ToolCallContent] = {}
@@ -432,10 +432,12 @@ class MainWindow(QMainWindow):
 
     def _onSessionWorkAreaChanged(self, path: str) -> None:
         """
-        Update status bar only for the currently selected session.
+        Update status bar only for the currently selected session and persist the path.
         """
         if self.sender() is self._tabs.currentWidget():
             self._setWorkspaceStatusText(f"Workspace: {path}")
+        if path:
+            self._settings.workspace_path = path
 
     def _onSelectWorkspaceRequested(self):
         """
@@ -477,10 +479,12 @@ class MainWindow(QMainWindow):
         Add a new session tab to the main window.
         """
         n = self._tabs.count() + 1
-        chat_widget = SessionWidget(settings=self._settings, parent=self._tabs)
+        stored_path = self._settings.workspace_path
+        chat_widget = SessionWidget(settings=self._settings, parent=self._tabs, workspace_path=stored_path)
         chat_widget.workspaceChanged.connect(self._onSessionWorkAreaChanged)
         self._tabs.addTab(chat_widget, qtawesome.icon('mdi6.comment-multiple-outline'), f"Session {n}")
         self._tabs.setCurrentWidget(chat_widget)
+
         self._updateStatusBar()
         return chat_widget
 
