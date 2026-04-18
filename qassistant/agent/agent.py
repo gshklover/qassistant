@@ -4,15 +4,18 @@ Agent implementation. Provides a small adapter around GenAI SDK and tool executi
 import asyncio
 import copilot
 from copilot.generated.session_events import SessionEventType
+from copilot.generated.rpc import SessionAgentSelectParams
 import dataclasses
 import functools
 import inspect
 import json
 import keyring
+import yaml
 from openai import AsyncOpenAI
 import os
+import pathlib
 import traceback
-from typing import Callable
+from typing import Callable, Sequence
 
 from .common import AgentEventHandler, BaseAgent
 from .tools.pythonshell import PythonShell
@@ -27,6 +30,13 @@ _MODEL_LIST_CACHE: list[str] | None = None
 _MODEL_LIST_LOCK = asyncio.Lock()
 _SHARED_CLIENT: copilot.CopilotClient | None = None
 _SHARED_CLIENT_LOCK = asyncio.Lock()
+
+
+class CustomAgentConfig(copilot.session.CustomAgentConfig):
+    """
+    Extends custom agent definition with icon settings
+    """
+    icon: str
 
 
 async def _get_client() -> copilot.CopilotClient:
@@ -290,6 +300,10 @@ class Agent(BaseAgent):
             self._session = await client.resume_session(working_directory=self._workspace_path, session_id=session_id, **self._config)
         else:
             self._session = await client.create_session(working_directory=self._workspace_path, **self._config)
+
+        if self._config.get('agent', None):
+            await self._session.rpc.agent.select(SessionAgentSelectParams(name=self._config.get('agent')))
+
         self._session.on(self._on_event)
 
     async def stop(self):
@@ -343,6 +357,21 @@ class Agent(BaseAgent):
         Set the workspace to the specified path.
         """
         self._workspace_path = path
+        await self._restart_session()
+
+    async def set_agents(self, agents: list[CustomAgentConfig], agent: str = ""):
+        """
+        Set the available custom agents and optionally select one by name.
+        Updates the session configuration and restarts the session.
+        """
+        self._config['custom_agents'] = agents or None
+        self._config['agent'] = agent or None
+        await self._restart_session()
+
+    async def _restart_session(self):
+        """
+        Restart the current session, preserving the session id.
+        """
         if self._session is not None:
             session_id = self._session.session_id
             await self.stop()
@@ -386,7 +415,7 @@ class Agent(BaseAgent):
         if event.type == SessionEventType.SESSION_USAGE_INFO:
             token_limit = args.pop("token_limit", None) or 0.0
             current_tokens = args.pop("current_tokens", None) or 0.0
-            args.pop("messages_length", None)
+            # args.pop("messages_length", None)
             usage_percentage = (current_tokens / token_limit * 100.0) if token_limit > 0 else 0.0
             args = {"usage_percentage": usage_percentage}
             self._usage = usage_percentage
@@ -470,3 +499,57 @@ class Model:
         """
         response = await self._client.embeddings.create(input=text, model=self._embedding_model)
         return response.data[0].embedding
+
+
+def read_agent_md(file: pathlib.Path) -> CustomAgentConfig:
+    """
+    Read a single *.agent.md file and return a CustomAgentConfig.
+    Parses YAML frontmatter for name and description, uses the body as prompt.
+    """
+    text = file.read_text(encoding="utf-8").strip()
+
+    name = ""
+    description = ""
+    tools = []
+    icon = ""
+    prompt = text
+
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            frontmatter = yaml.safe_load(parts[1]) or {}
+            prompt = parts[2].strip()
+            name = frontmatter.get("name", "")
+            description = frontmatter.get("description", "")
+            icon = frontmatter.get("icon", "")
+            tools = frontmatter.get("tools", [])
+
+    if not name:
+        name = file.stem.removesuffix(".agent")
+
+    return CustomAgentConfig(
+        name=name,
+        description=description,
+        prompt=prompt,
+        icon=icon,
+        tools=tools
+    )
+
+
+def load_agents(directory: str = None) -> Sequence[CustomAgentConfig]:
+    """
+    Read agents configuration from specified directory.
+    If not specified, reads ~/.copilot/agents directory.
+    """
+    agents_dir = pathlib.Path(directory) if directory else pathlib.Path.home() / ".copilot" / "agents"
+    if not agents_dir.is_dir():
+        return []
+
+    result = [read_agent_md(f) for f in sorted(agents_dir.glob("*.agent.md"))]
+
+    # check all sub-directories with agent.md files:
+    for subdir in agents_dir.iterdir():
+        if subdir.is_dir() and (subdir / "agent.md").exists() and (subdir / "agent.md").is_file():
+            result.append(read_agent_md(subdir / "agent.md"))
+
+    return result

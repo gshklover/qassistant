@@ -1,22 +1,39 @@
 """
 Application entry for qassistant GUI.
 """
+
 import asyncio
-from contextlib import contextmanager
 import sys
-from PySide6.QtCore import QSize, Signal
-from PySide6.QtGui import QAction, Qt
-from PySide6.QtWidgets import QApplication, QFileDialog, QGridLayout, QHBoxLayout, QLabel, QMainWindow, QPushButton, QStatusBar, QTabWidget, QToolBar, \
-    QWidget, QSizePolicy
+import traceback
+from contextlib import contextmanager
+from typing import Optional
+
 import PySide6.QtAsyncio as QtAsyncio
 import qtawesome
-import traceback
+from PySide6.QtCore import QSize, Signal
+from PySide6.QtGui import QAction, Qt
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QFileDialog,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QSizePolicy,
+    QStatusBar,
+    QTabWidget,
+    QToolBar,
+    QWidget,
+)
 
-from ..agent import Agent, AgentEventHandler, Message, Role, TextContent, list_models
-from .settings import Settings, SettingsDlg
 from .._version import __version__
-from .widgets import ChatWidget, UsagePieWidget
+from ..agent import Agent, AgentEventHandler, Message, Role, TextContent, list_models, load_agents
+from ..agent.agent import CustomAgentConfig
 from ..agent.common import MessageState, ToolCallContent
+from .settings import Settings, SettingsDlg
+from .widgets import ChatWidget, UsagePieWidget
 
 
 @contextmanager
@@ -43,19 +60,27 @@ class _SessionStreamHandler(AgentEventHandler):
     def __init__(self, widget: "SessionWidget"):
         self._widget = widget
 
-    async def on_tool_execution_start(self, tool_name, arguments, tool_call_id, interaction_id):
+    async def on_tool_execution_start(
+        self, tool_name, arguments, tool_call_id, interaction_id
+    ):
         self._widget._onToolExecutionStart(tool_name, arguments, tool_call_id)
         self._widget._onMessageStateChanged(MessageState.EXECUTING)
 
-    async def on_tool_execution_complete(self, tool_call_id, success, result, error, interaction_id):
+    async def on_tool_execution_complete(
+        self, tool_call_id, success, result, error, interaction_id
+    ):
         self._widget._onToolExecutionComplete(tool_call_id, success, result, error)
         self._widget._onMessageStateChanged(MessageState.PROCESSING)
 
-    async def on_assistant_message_delta(self, delta_content, message_id, interaction_id):
+    async def on_assistant_message_delta(
+        self, delta_content, message_id, interaction_id
+    ):
         if delta_content:
             self._widget._onMessageDelta(delta_content)
 
-    async def on_assistant_message(self, content, message_id, interaction_id, reasoning_text, tool_requests):
+    async def on_assistant_message(
+        self, content, message_id, interaction_id, reasoning_text, tool_requests
+    ):
         if content:
             self._widget._setAssistantMessage(content)
 
@@ -83,13 +108,26 @@ class SessionWidget(QWidget):
     workspaceChanged = Signal(str)
     usageChanged = Signal(float)
 
-    def __init__(self, settings: Settings, parent: QWidget = None, workspace_path: str = ""):
+    def __init__(
+        self,
+        settings: Settings,
+        parent: Optional[QWidget] = None,
+        workspace_path: str = "",
+    ):
         super().__init__(parent=parent)
 
         self._settings = settings
         self._stream_handler = _SessionStreamHandler(self)
-        self._agent = Agent(model=settings.model, event_handlers=[self._stream_handler], workspace_path=workspace_path)
-        self._chat_widget = ChatWidget(parent=self, sendRequested=self._onSendRequested, stopRequested=self._onStopRequested)
+        self._agent = Agent(
+            model=settings.model,
+            event_handlers=[self._stream_handler],
+            workspace_path=workspace_path,
+        )
+        self._chat_widget = ChatWidget(
+            parent=self,
+            sendRequested=self._onSendRequested,
+            stopRequested=self._onStopRequested,
+        )
         self._response_message: Message | None = None
         self._tool_call_content_map: dict[str, ToolCallContent] = {}
         self._has_delta_content = False
@@ -115,6 +153,12 @@ class SessionWidget(QWidget):
         """
         return self._agent.usage
 
+    def setAgents(self, agents: list[CustomAgentConfig], agent: str):
+        """
+        Apply the specified list of custom agents and current agent selection.
+        """
+        asyncio.create_task(self._agent.set_agents(agents, agent))
+
     def _onSendRequested(self, message: str):
         """
         Handle send requests from the UI and route them to the agent.
@@ -125,7 +169,9 @@ class SessionWidget(QWidget):
         )
 
         # create a new placeholder for assisatant response and run the agent:
-        self._response_message = Message(role=Role.ASSISTANT, content=[], state=MessageState.PROCESSING)
+        self._response_message = Message(
+            role=Role.ASSISTANT, content=[], state=MessageState.PROCESSING
+        )
         self._chat_widget.appendMessage(self._response_message)
         self._has_delta_content = False
         self._aborted = False
@@ -191,7 +237,11 @@ class SessionWidget(QWidget):
         if self._response_message is None:
             raise RuntimeError("No active response message")
 
-        last_content = self._response_message.content[-1] if self._response_message.content else None
+        last_content = (
+            self._response_message.content[-1]
+            if self._response_message.content
+            else None
+        )
         if isinstance(last_content, TextContent):
             return last_content
 
@@ -199,7 +249,9 @@ class SessionWidget(QWidget):
         self._response_message.append(response_text)
         return response_text
 
-    def _onToolExecutionStart(self, tool_name: str | None, arguments, tool_call_id: str | None):
+    def _onToolExecutionStart(
+        self, tool_name: str | None, arguments, tool_call_id: str | None
+    ):
         """
         Append a tool call content block when tool execution starts.
         """
@@ -217,7 +269,9 @@ class SessionWidget(QWidget):
         # Next streamed delta should become a new text chunk after this tool call.
         self._chat_widget.updateMessage(self._response_message)
 
-    def _onToolExecutionComplete(self, tool_call_id: str | None, success: bool | None, result, error):
+    def _onToolExecutionComplete(
+        self, tool_call_id: str | None, success: bool | None, result, error
+    ):
         """
         Update tool call content with completion result.
         """
@@ -322,6 +376,7 @@ class MainWindow(QMainWindow):
     """
     Main window for qassistant GUI. This is a placeholder for the actual UI.
     """
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.setWindowTitle("qassistant")
@@ -340,19 +395,25 @@ class MainWindow(QMainWindow):
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._tool_bar.addWidget(spacer)
 
-        self._new_session_action = QAction(qtawesome.icon("mdi6.plus", color='darkgreen'), "New Session", self)
+        self._new_session_action = QAction(
+            qtawesome.icon("mdi6.plus", color="darkgreen"), "New Session", self
+        )
         self._new_session_action.setToolTip("Open a new session tab")
         self._new_session_action.triggered.connect(self.addSessionTab)
         self._tool_bar.addAction(self._new_session_action)
 
-        self._reset_session_action = QAction(qtawesome.icon("mdi6.refresh", color='darkred'), "Reset", self)
+        self._reset_session_action = QAction(
+            qtawesome.icon("mdi6.refresh", color="darkred"), "Reset", self
+        )
         self._reset_session_action.setToolTip("Reset the current session")
         self._reset_session_action.triggered.connect(self._onResetSession)
         self._tool_bar.addAction(self._reset_session_action)
 
         self._tool_bar.addSeparator()
 
-        self._settings_action = QAction(qtawesome.icon("mdi6.cog-outline", color='#404040'), "Settings", self)
+        self._settings_action = QAction(
+            qtawesome.icon("mdi6.cog-outline", color="#404040"), "Settings", self
+        )
         self._settings_action.setToolTip("Open application settings")
         self._settings_action.triggered.connect(self._onSettingsRequested)
         self._tool_bar.addAction(self._settings_action)
@@ -388,12 +449,26 @@ class MainWindow(QMainWindow):
         self._workspace_status_label.setMinimumWidth(0)
         status_layout.addWidget(self._workspace_status_label, 1)
 
+        # agent selection:
+        self._agent_combo = QComboBox(
+            parent=self._status_widget,
+            editable=False,
+            toolTip="Select agent",
+        )
+        self._agent_combo.setMinimumWidth(120)
+        self._agent_combo.mousePressEvent = self._onAgentComboClicked
+        self._agent_combo.currentTextChanged.connect(self._onAgentSelectionChanged)
+        self._agents: list[CustomAgentConfig] = []
+        status_layout.addWidget(self._agent_combo)
+
+        # usage indicator:
         self._usage_indicator = UsagePieWidget(parent=self._status_widget)
         status_layout.addWidget(self._usage_indicator)
 
         self._status_bar.addWidget(self._status_widget, 1)
 
         self._setWorkspaceStatusText("Workspace: <unknown>")
+        self._loadAgents()
 
     def _onResetSession(self) -> None:
         """
@@ -402,6 +477,44 @@ class MainWindow(QMainWindow):
         widget = self._tabs.currentWidget()
         if isinstance(widget, SessionWidget):
             widget.reset()
+
+    def _onAgentComboClicked(self, event):
+        """
+        Refresh agent list before showing the dropdown.
+        """
+        self._loadAgents()
+        QComboBox.mousePressEvent(self._agent_combo, event)
+
+    def _loadAgents(self):
+        """
+        Load available agent definitions and populate the agent combo box.
+        """
+        try:
+            self._agents = load_agents()
+        except Exception:
+            traceback.print_exc()
+            self._agents = []
+
+        current = self._agent_combo.currentText()
+        self._agent_combo.blockSignals(True)
+        self._agent_combo.clear()
+        self._agent_combo.addItem("(default)")
+        for agent in self._agents:
+            self._agent_combo.addItem(agent.get("name", "unnamed"))
+
+        index = self._agent_combo.findText(current)
+        if index >= 0:
+            self._agent_combo.setCurrentIndex(index)
+        self._agent_combo.blockSignals(False)
+
+    def _onAgentSelectionChanged(self, text: str):
+        """
+        Apply agent selection change to the active session.
+        """
+        agent_name = "" if text == "(default)" else text
+        widget = self._tabs.currentWidget()
+        if isinstance(widget, SessionWidget):
+            widget.setAgents(self._agents, agent_name)
 
     def _onSettingsRequested(self) -> None:
         """
@@ -519,10 +632,14 @@ class MainWindow(QMainWindow):
         """
         n = self._tabs.count() + 1
         stored_path = self._settings.workspace_path
-        chat_widget = SessionWidget(settings=self._settings, parent=self._tabs, workspace_path=stored_path)
+        chat_widget = SessionWidget(
+            settings=self._settings, parent=self._tabs, workspace_path=stored_path
+        )
         chat_widget.workspaceChanged.connect(self._onSessionWorkAreaChanged)
         chat_widget.usageChanged.connect(self._onSessionUsageChanged)
-        self._tabs.addTab(chat_widget, qtawesome.icon('mdi6.comment-multiple-outline'), f"Session {n}")
+        self._tabs.addTab(
+            chat_widget, qtawesome.icon("mdi6.comment-multiple-outline"), f"Session {n}"
+        )
         self._tabs.setCurrentWidget(chat_widget)
 
         self._updateStatusBar()
@@ -539,12 +656,13 @@ class Application(QApplication):
     """
     Main application class for qassistant GUI.
     """
+
     def __init__(self):
         super().__init__([])
 
         self.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling)
         self.setApplicationName("qassistant")
-        self.setDesktopFileName('qassistant')
+        self.setDesktopFileName("qassistant")
         self.setApplicationVersion(__version__)
         self.setWindowIcon(qtawesome.icon("mdi6.comment-multiple-outline", size=64))
 
@@ -561,7 +679,10 @@ def run_app():
     """
     if sys.platform == "win32":
         import ctypes
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('com.qassistant.app')
 
-    app = Application()
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "com.qassistant.app"
+        )
+
+    app = Application()  # noqa
     QtAsyncio.run()

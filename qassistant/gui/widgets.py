@@ -213,7 +213,9 @@ class UsagePieWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # Position the pie at the spacer item's geometry
-        pie_rect = QRectF(self._pie_spacer.geometry())
+        spacer_geom = self._pie_spacer.geometry()
+        size = min(spacer_geom.width(), spacer_geom.height())
+        pie_rect = QRectF(spacer_geom.left(), spacer_geom.top() + (spacer_geom.height() - size) / 2, size, size)
 
         # Draw background track (full circle)
         painter.setPen(Qt.PenStyle.NoPen)

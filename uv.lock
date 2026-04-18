@@ -1625,6 +1625,7 @@ dependencies = [
     { name = "pandas" },
     { name = "pygments" },
     { name = "pyside6" },
+    { name = "pyyaml" },
     { name = "qtawesome" },
 ]
 
@@ -1642,6 +1643,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=3.0.1" },
     { name = "pygments", specifier = ">=2.19.2" },
     { name = "pyside6", specifier = ">=6.10.2" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "qtawesome", specifier = ">=1.4.1" },
 ]
 

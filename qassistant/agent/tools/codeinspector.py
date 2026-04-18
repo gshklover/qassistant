@@ -359,4 +359,3 @@ class CodeInspector:
         """
         raw = await self._embedder(text)
         return numpy.array(raw, dtype=numpy.float32)
-
