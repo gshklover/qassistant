@@ -2,6 +2,8 @@
 Unit tests for the Agent event handler integration.
 """
 import asyncio
+import datetime
+
 from copilot.generated.session_events import SessionEventType
 from types import SimpleNamespace
 import unittest
@@ -407,6 +409,38 @@ class TestModel(unittest.IsolatedAsyncioTestCase):
     """
     Validate Model chat and embed methods against the live GitHub Models API.
     """
+
+    async def test_list_models_returns_catalog(self):
+        """
+        Test that list_models() returns a non-empty list of model dicts with expected fields.
+        """
+        from qassistant.agent.agent import Model
+
+        models = await Model.list_models()
+        print(models)
+
+        self.assertIsInstance(models, list)
+        self.assertGreater(len(models), 0)
+        for model in models:
+            self.assertIn('id', model)
+            self.assertIn('name', model)
+            self.assertIn('summary', model)
+            self.assertIn('capabilities', model)
+            self.assertIsInstance(model['id'], str)
+            self.assertTrue(model['id'])
+
+        # gpt-4.1-nano appears to be one of the fastest models
+        # github_model = Model()
+        # for model in models:
+        #     github_model.chat_model = model['id']
+        #     try:
+        #         start = datetime.datetime.now()
+        #         _ = await github_model.chat([{'role': 'user', 'content': 'compute 2 + 2'}])
+        #         end = datetime.datetime.now()
+        #     except:
+        #         continue
+        #     print(f'{model["id"]}: {(end - start).total_seconds():.2f} seconds')
+
 
     async def test_chat_returns_answer_to_arithmetic(self):
         """

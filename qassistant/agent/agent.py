@@ -7,6 +7,7 @@ from copilot.generated.session_events import SessionEventType
 from copilot.generated.rpc import SessionAgentSelectParams
 import dataclasses
 import functools
+import httpx
 import inspect
 import json
 import keyring
@@ -23,7 +24,7 @@ from .tools.pythonshell import PythonShell
 
 # agent defaults:
 DEFAULT_MODEL = "gpt-5-mini"
-DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+DEFAULT_EMBEDDING_MODEL = "openai/text-embedding-3-small"
 DEFAULT_TIMEOUT = 300.0  # per-turn timeout in seconds
 
 _MODEL_LIST_CACHE: list[str] | None = None
@@ -446,45 +447,77 @@ class Agent(BaseAgent):
         asyncio.create_task(self._handle_event(event))
 
 
+def get_token() -> str:
+    """
+    Read the GitHub Copilot CLI token from the local config and keyring.
+    """
+    # Linux:
+    config_path = os.path.expanduser('~/.copilot.cfg')
+    if os.path.exists(config_path):
+        with open(config_path) as stream:
+            return stream.read().strip()
+
+    config_path = os.path.expanduser('~/.copilot/config.json')
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Failed to find ~/.copilot/config.json")
+
+    with open(config_path) as stream:
+        config = json.load(stream)
+        host = config['loggedInUsers'][0]['host']
+        user_name = config['loggedInUsers'][0]['login']
+
+    # access Windows Credential Manager to get copilot-cli token:
+    # "keyring" attempts to decode it using utf-16 by default, we reverse the encoding
+    token_utf16 = keyring.get_password(f'copilot-cli/{host}:{user_name}', f'{host}:{user_name}')
+    if not token_utf16:
+        raise ValueError(f'Failed to get token for {host}:{user_name}')
+    return token_utf16.encode('utf-16')[2:].decode('ascii')
+
+
 class Model:
     """
     Wraps around github models API to provide chat completions and text embedding.
     """
-    def __init__(self, chat_model: str = DEFAULT_MODEL, embedding_model: str = DEFAULT_EMBEDDING_MODEL):
+    def __init__(self, chat_model: str = f'openai/{DEFAULT_MODEL}', embedding_model: str = DEFAULT_EMBEDDING_MODEL):
         """
         Initialize the client with authentication and model configuration.
         """
-        config_path = os.path.expanduser('~/.copilot/config.json')
-        if not os.path.exists(config_path):
-            raise FileNotFoundError(f"Failed to find ~/.copilot/config.json")
-
-        with open(config_path) as stream:
-            config = json.load(stream)
-            host = config['logged_in_users'][0]['host']
-            user_name = config['logged_in_users'][0]['login']
-
-        # access Windows Credential Manager to get copilot-cli token:
-        # "keyring" attempts to decode it using utf-16 by default, we reverse the encoding
-        token_utf16 = keyring.get_password(f'copilot-cli/{host}:{user_name}', f'{host}:{user_name}')
-        if not token_utf16:
-            raise ValueError(f'Failed to get token for {host}:{user_name}')
-        token = token_utf16.encode('utf-16')[2:].decode('ascii')
+        token = get_token()
 
         self._client = AsyncOpenAI(
             base_url='https://models.github.ai/inference',
             api_key=token,
         )
-        self._chat_model = f'openai/{chat_model}'
-        self._embedding_model = f'openai/{embedding_model}'
+        self._chat_model = chat_model
+        self._embedding_model = embedding_model
 
-    # NOT SUPPORTED BY GITHUB MODELS
-    # async def complete(self, prompt: str) -> str:
-    #     """
-    #     Get a completion for the input prompt.
-    #     Not supported by newer models.
-    #     """
-    #     response = await self._client.completions.create(prompt=prompt, model=self._chat_model, echo=False)
-    #     return response.choices[0].text
+    @property
+    def chat_model(self) -> str:
+        """
+        Get the current chat model name.
+        """
+        return self._chat_model
+
+    @chat_model.setter
+    def chat_model(self, new_model: str):
+        """
+        Update the chat model name.
+        """
+        self._chat_model = new_model
+
+    @property
+    def embedding_model(self) -> str:
+        """
+        Get the current embedding model name.
+        """
+        return self._embedding_model
+
+    @embedding_model.setter
+    def embedding_model(self, new_model: str):
+        """
+        Update the embedding model name.
+        """
+        self._embedding_model = new_model
 
     async def chat(self, messages: list[dict]) -> str:
         """
@@ -499,6 +532,32 @@ class Model:
         """
         response = await self._client.embeddings.create(input=text, model=self._embedding_model)
         return response.data[0].embedding
+
+    @staticmethod
+    async def list_models() -> list[dict]:
+        """
+        Fetch the list of supported models from the GitHub Models catalog.
+        Returns a list of dicts with 'id', 'name', 'summary', and 'capabilities' fields.
+        """
+        token = get_token()
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                'https://models.github.ai/catalog/models',
+                headers={'Authorization': f'Bearer {token}'},
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        return [
+            {
+                'id': item.get('id', ''),
+                'name': item.get('name', ''),
+                'summary': item.get('summary', ''),
+                'capabilities': item.get('capabilities', []),
+            }
+            for item in data
+        ]
 
 
 def read_agent_md(file: pathlib.Path) -> CustomAgentConfig:
