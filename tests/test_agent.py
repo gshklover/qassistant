@@ -10,7 +10,7 @@ import unittest
 from uuid import uuid4
 
 
-from qassistant.agent import Agent, AgentEventHandler, list_models
+from qassistant.agent import Agent, AgentEventHandler, list_session_models
 
 
 class _RecordingEventsHandler(AgentEventHandler):
@@ -163,7 +163,7 @@ class TestAgent(unittest.IsolatedAsyncioTestCase):
         """
         Validate that the agent can retrieve a list of available models from the API.
         """
-        models = await list_models()
+        models = await list_session_models()
         self.assertIsInstance(models, list)
         self.assertGreater(len(models), 0)
 

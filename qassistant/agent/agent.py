@@ -59,9 +59,9 @@ async def _get_client() -> copilot.CopilotClient:
         return _SHARED_CLIENT
 
 
-async def list_models() -> list[str]:
+async def list_session_models() -> list[str]:
     """
-    List available model ids from the Copilot API.
+    List available model ids from the Copilot API that can be used for agent sessions.
     """
     global _MODEL_LIST_CACHE
 
@@ -77,6 +77,14 @@ async def list_models() -> list[str]:
 
         _MODEL_LIST_CACHE = [model.id for model in models]
         return list(_MODEL_LIST_CACHE)
+
+
+async def list_sessions() -> list[copilot.client.SessionMetadata]:
+    """
+    List existing Copilot sessions from the client API.
+    """
+    client = await _get_client()
+    return await client.list_sessions()
 
 
 # map event type to handler name & argument mapping

@@ -22,13 +22,44 @@ from PySide6.QtWidgets import (
     QSpacerItem,
 )
 import qtawesome
-from typing import Callable, TypeVar, Generic
+from typing import Callable, Generic, Sequence, TypeAlias, TypeVar
 
 
 from ..agent.common import CodeContent, Content, ImageContent, Message, MessageState, SectionContent, TableContent, TextContent, ToolCallContent
 
 
 ContentT = TypeVar("ContentT", bound=Content)  # generic type variable for ContentView
+AutoCompleter: TypeAlias = Callable[[list[Message], str], list[str]]
+AutoCompleterInput: TypeAlias = AutoCompleter | Sequence[AutoCompleter] | None
+
+
+def _normalizeAutoCompleters(autoCompleters: AutoCompleterInput) -> list[AutoCompleter]:
+    """
+    Normalize one or more auto-completers into a list of callables.
+    """
+    if autoCompleters is None:
+        return [PathAutoCompleter]
+
+    if callable(autoCompleters):
+        return [autoCompleters]
+
+    return [completer for completer in autoCompleters if callable(completer)]
+
+
+def _completeWithAutoCompleters(
+    autoCompleters: AutoCompleterInput,
+    messages: list[Message],
+    text: str,
+) -> list[str]:
+    """
+    Collect completion suggestions from one or more completers in order.
+    """
+    completions: list[str] = []
+    for completer in _normalizeAutoCompleters(autoCompleters):
+        for suggestion in completer(messages, text) or []:
+            if suggestion not in completions:
+                completions.append(suggestion)
+    return completions
 
 
 def drawSpinner(
@@ -726,6 +757,7 @@ class ChatHistoryView(QScrollArea):
         container.setLayout(self._container_layout)
         self.setWidget(container)
         self._message_map: dict[int, ChatMessageView] = {}
+        self._messages: list[Message] = []
         if stopRequested is not None:
             self.stopRequested.connect(stopRequested)
 
@@ -736,6 +768,7 @@ class ChatHistoryView(QScrollArea):
         """
         message_view = ChatMessageView(message=message)
         self._message_map[id(message)] = message_view
+        self._messages.append(message)
         row = QHBoxLayout()
         row.setContentsMargins(0, 2, 0, 2)
         row.setSpacing(0)
@@ -771,91 +804,89 @@ class ChatHistoryView(QScrollArea):
             if w is not None:
                 w.setParent(None)
         self._message_map.clear()
+        self._messages.clear()
 
-
-class TextAutoCompleter:
-    """
-    Base text auto-completer interface
-    """
-    def __init__(self):
-        pass
-
-    def complete(self, text: str) -> list[str]:
+    def removeMessage(self, message: Message) -> None:
         """
-        Return a list of completion suggestions for the given text.
+        Remove a message from tracked history.
         """
-        return []
-
-
-class PathAutoCompleter(TextAutoCompleter):
-    """
-    Auto-completer for filesystem paths. Can be attached to a QTextEdit to provide path suggestions.
-    """
-    def __init__(self):
-        super().__init__()
-
-    def complete(self, text: str) -> list[str]:
-        """
-        Return path completion candidates for the provided path fragment.
-        """
-        full_text = text or ""
-        if not full_text:
-            return []
-
-        delimiters = set(" \t\r\n\"'`()[]{}<>,;|&")
-        start = len(full_text)
-        while start > 0 and full_text[start - 1] not in delimiters:
-            start -= 1
-
-        prefix_text = full_text[:start]
-        fragment = full_text[start:]
-        if not fragment:
-            return []
-
-        has_separator = "/" in fragment
-        if has_separator:
-            base_part, name_part = fragment.rsplit("/", 1)
-            if fragment.startswith("/") and base_part == "":
-                base_part = "/"
-        else:
-            base_part, name_part = ".", fragment
-
-        search_dir = Path(base_part).expanduser()
-        if not search_dir.is_absolute():
-            search_dir = Path.cwd() / search_dir
-
+        self._message_map.pop(id(message), None)
         try:
-            entries = sorted(search_dir.iterdir(), key=lambda p: p.name)
-        except (FileNotFoundError, NotADirectoryError, PermissionError):
-            return []
+            self._messages.remove(message)
+        except ValueError:
+            pass
 
-        completions: list[str] = []
-        for entry in entries:
-            if not entry.name.startswith(name_part):
-                continue
+    def messages(self) -> list[Message]:
+        """
+        Return a snapshot of chat messages in display order.
+        """
+        return list(self._messages)
 
-            if has_separator:
-                if base_part == "/":
-                    candidate = f"/{entry.name}"
-                else:
-                    candidate = f"{base_part}/{entry.name}"
-            else:
-                candidate = entry.name
 
-            if entry.is_dir():
-                candidate += "/"
-            completions.append(candidate)
-
-        if not completions:
-            return []
-
-        if len(completions) == 1:
-            return [f"{prefix_text}{completions[0]}"]
-
-        common = os.path.commonprefix(completions)
-        if len(common) > len(fragment):
-            return [f"{prefix_text}{common}"]
+def PathAutoCompleter(messages: list[Message], text: str) -> list[str]:
+    """
+    Return path completion candidates for the provided path fragment.
+    """
+    # Path completion currently does not use chat history context.
+    _ = messages
+    full_text = text or ""
+    if not full_text:
         return []
+
+    delimiters = set(" \t\r\n\"'`()[]{}<>,;|&")
+    start = len(full_text)
+    while start > 0 and full_text[start - 1] not in delimiters:
+        start -= 1
+
+    prefix_text = full_text[:start]
+    fragment = full_text[start:]
+    if not fragment:
+        return []
+
+    has_separator = "/" in fragment
+    if has_separator:
+        base_part, name_part = fragment.rsplit("/", 1)
+        if fragment.startswith("/") and base_part == "":
+            base_part = "/"
+    else:
+        base_part, name_part = ".", fragment
+
+    search_dir = Path(base_part).expanduser()
+    if not search_dir.is_absolute():
+        search_dir = Path.cwd() / search_dir
+
+    try:
+        entries = sorted(search_dir.iterdir(), key=lambda p: p.name)
+    except (FileNotFoundError, NotADirectoryError, PermissionError):
+        return []
+
+    completions: list[str] = []
+    for entry in entries:
+        if not entry.name.startswith(name_part):
+            continue
+
+        if has_separator:
+            if base_part == "/":
+                candidate = f"/{entry.name}"
+            else:
+                candidate = f"{base_part}/{entry.name}"
+        else:
+            candidate = entry.name
+
+        if entry.is_dir():
+            candidate += "/"
+        completions.append(candidate)
+
+    if not completions:
+        return []
+
+    if len(completions) == 1:
+        return [f"{prefix_text}{completions[0]}"]
+
+    common = os.path.commonprefix(completions)
+    if len(common) > len(fragment):
+        return [f"{prefix_text}{common}"]
+    return []
 
 
 class _TextEdit(QTextEdit):
@@ -866,10 +897,28 @@ class _TextEdit(QTextEdit):
 
     submitted = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        autoCompleters: AutoCompleterInput = None,
+        messagesProvider: Callable[[], list[Message]] | None = None,
+    ) -> None:
         super().__init__(parent)
-        self._completer = PathAutoCompleter()
+        self._autoCompleters = _normalizeAutoCompleters(autoCompleters)
+        self._messagesProvider = messagesProvider or (lambda: [])
         self._completion_active = False
+
+    def setAutoCompleters(self, autoCompleters: AutoCompleterInput) -> None:
+        """
+        Set one or more auto-completers for this text edit.
+        """
+        self._autoCompleters = _normalizeAutoCompleters(autoCompleters)
+
+    def setMessagesProvider(self, messagesProvider: Callable[[], list[Message]]) -> None:
+        """
+        Set callback used to resolve current chat history for completions.
+        """
+        self._messagesProvider = messagesProvider
 
     def keyPressEvent(self, event: QKeyEvent):  # pragma: no cover - UI
         """
@@ -906,46 +955,37 @@ class _TextEdit(QTextEdit):
         else:
             self._completion_active = False
 
-    def _currentPathFragment(self) -> tuple[str, int, int]:
-        """
-        Return the current path-like fragment around cursor and its text range.
-        """
-        cursor = self.textCursor()
-        end = cursor.position()
-        text = self.toPlainText()
-
-        delimiters = set(" \t\r\n\"'`()[]{}<>,;|&")
-        start = end
-        while start > 0 and text[start - 1] not in delimiters:
-            start -= 1
-
-        return text[start:end], start, end
-
     def _updateCompletion(self) -> None:
         """
         Compute and display inline completion as selected text.
         """
-        fragment, start, end = self._currentPathFragment()
-        if not fragment:
+        full_text = self.toPlainText()
+        if not full_text:
             self._completion_active = False
             return
 
-        candidates = self._completer.complete(fragment)
+        cursor = self.textCursor()
+        end = cursor.position()
+        typed_text = full_text[:end]
+        candidates = _completeWithAutoCompleters(
+            self._autoCompleters,
+            self._messagesProvider(),
+            typed_text,
+        )
         if not candidates:
             self._completion_active = False
             return
 
         suggestion = candidates[0]
-        if suggestion == fragment or not suggestion.startswith(fragment):
+        if suggestion == typed_text or not suggestion.startswith(typed_text):
             self._completion_active = False
             return
 
-        suffix = suggestion[len(fragment):]
+        suffix = suggestion[len(typed_text):]
         if not suffix:
             self._completion_active = False
             return
 
-        cursor = self.textCursor()
         cursor.setPosition(end)
         cursor.insertText(suffix)
         selection_end = cursor.position()
@@ -1046,12 +1086,22 @@ class EditBox(QWidget):
     sendRequested = Signal(str)
     stopRequested = Signal()
 
-    def __init__(self, parent: QWidget | None = None, sendRequested: Callable = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        sendRequested: Callable = None,
+        autoCompleters: AutoCompleterInput = None,
+        messagesProvider: Callable[[], list[Message]] | None = None,
+    ) -> None:
         super().__init__(parent)
         self._busy = False
 
         # Internal multi-line edit with Enter-to-send handling
-        self._edit = _TextEdit(parent=self)
+        self._edit = _TextEdit(
+            parent=self,
+            autoCompleters=autoCompleters,
+            messagesProvider=messagesProvider,
+        )
         self._edit.setPlaceholderText("Type your message here...")
         self._edit.submitted.connect(self._onButtonClicked)
 
@@ -1133,6 +1183,12 @@ class EditBox(QWidget):
         """
         self._edit.clear()
 
+    def setAutoCompleters(self, autoCompleters: AutoCompleterInput) -> None:
+        """
+        Set one or more text auto-completers used by this edit box.
+        """
+        self._edit.setAutoCompleters(autoCompleters)
+
 
 class ChatWidget(QWidget):
     """
@@ -1142,11 +1198,20 @@ class ChatWidget(QWidget):
     sendRequested = Signal(str)
     stopRequested = Signal(object)
 
-    def __init__(self, parent: QWidget | None = None, sendRequested: Callable[[str], None] = None, 
-                 stopRequested: Callable[[object], None] = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        sendRequested: Callable[[str], None] = None,
+        stopRequested: Callable[[object], None] = None,
+        autoCompleters: AutoCompleterInput = None,
+    ) -> None:
         super().__init__(parent)
         self._messageHistory = ChatHistoryView(stopRequested=self.stopRequested.emit)
-        self._editBox = EditBox(sendRequested=self._onSendRequested)
+        self._editBox = EditBox(
+            sendRequested=self._onSendRequested,
+            autoCompleters=autoCompleters,
+            messagesProvider=self._messageHistory.messages,
+        )
         self._editBox.stopRequested.connect(lambda: self.stopRequested.emit(None))
 
         layout = QGridLayout(self)        
@@ -1180,7 +1245,14 @@ class ChatWidget(QWidget):
         for view in self._messageHistory.findChildren(ChatMessageView):
             if view.role() == message.role and view.message is message:
                 view.setParent(None)
+                self._messageHistory.removeMessage(message)
                 break
+
+    def setAutoCompleters(self, autoCompleters: AutoCompleterInput) -> None:
+        """
+        Set one or more auto-completers for the chat input.
+        """
+        self._editBox.setAutoCompleters(autoCompleters)
 
     def _onSendRequested(self, text: str) -> None:
         """

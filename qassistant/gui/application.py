@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from .._version import __version__
-from ..agent import Agent, AgentEventHandler, Message, Role, TextContent, list_models, load_agents
+from ..agent import Agent, AgentEventHandler, Message, Role, TextContent, list_session_models, load_agents
 from ..agent.agent import CustomAgentConfig
 from ..agent.common import MessageState, ToolCallContent
 from .settings import Settings, SettingsDlg
@@ -193,8 +193,12 @@ class SessionWidget(QWidget):
         """
         if not self._agent.running:
             await self._agent.start()
-
-        await self._agent.submit(message=message)
+        try:
+            await self._agent.submit(message=message)  # may throw if session was killed
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            self._finalizeResponse()
 
     def _onMessageStateChanged(self, state: MessageState) -> None:
         """
@@ -341,9 +345,17 @@ class SessionWidget(QWidget):
         Clear the chat history for this session.
         """
         self._chat_widget.clearHistory()
-        asyncio.create_task(self._agent.reset())  # NOTE: this is async task
+        asyncio.create_task(self._resetAsync())
         self._tool_call_content_map.clear()
         self.workspaceChanged.emit(self.workspacePath)
+
+    async def _resetAsync(self):
+        """
+        Abort any active turn before resetting the session.
+        """
+        if self._agent.running:  # this is not checking if there is current turn active, it check is the session was started
+            await self._agent.abort()
+        await self._agent.reset()
 
     def applySettings(self, settings: Settings) -> None:
         """
@@ -500,7 +512,15 @@ class MainWindow(QMainWindow):
         self._agent_combo.clear()
         self._agent_combo.addItem("(default)")
         for agent in self._agents:
-            self._agent_combo.addItem(agent.get("name", "unnamed"))
+            name = agent.get("name", "unnamed")
+            icon_name = agent.get("icon", "")
+            if icon_name:
+                try:
+                    self._agent_combo.addItem(qtawesome.icon(icon_name), name)
+                except Exception:
+                    self._agent_combo.addItem(name)
+            else:
+                self._agent_combo.addItem(name)
 
         index = self._agent_combo.findText(current)
         if index >= 0:
@@ -529,7 +549,7 @@ class MainWindow(QMainWindow):
         """
         try:
             with wait_cursor():
-                models = await list_models()
+                models = await list_session_models()
             if not models:
                 models = [self._settings.model]
         except Exception:
