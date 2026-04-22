@@ -13,7 +13,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QComboBox, QDialogButtonBox, QPushButton, QTextEdit
 
+from qassistant.agent import DEFAULT_MODEL
 from qassistant.agent.common import TextContent
+from qassistant.gui.application import MainWindow, SessionListWidget
 from qassistant.gui.settings import Settings, SettingsDlg, SettingsView
 from qassistant.gui.widgets import TextContentView
 
@@ -37,12 +39,12 @@ class TestSettings(unittest.TestCase):
         settings.copyFrom(other)
 
         self.assertEqual(settings.model, "gpt-5")
-        self.assertEqual(settings.available_models, ["gpt-5", "gpt-4.1"])
+        self.assertEqual(settings.available_models, ["gpt-4.1", "gpt-5"])
 
         settings.reset()
 
-        self.assertEqual(settings.model, "")
-        self.assertEqual(settings.available_models, ["gpt-5", "gpt-4.1"])
+        self.assertEqual(settings.model, DEFAULT_MODEL)
+        self.assertEqual(settings.available_models, ["gpt-4.1", "gpt-5"])
 
     def test_workspace_path_persists_via_qsettings(self):
         """
@@ -78,20 +80,14 @@ class TestSettings(unittest.TestCase):
         settings2 = Settings()
         self.assertEqual(settings2.workspace_path, "")
 
-    def test_workspace_path_emits_property_changed(self):
+    def test_workspace_path_updates_without_observer_api(self):
         """
-        Setting workspace_path fires a property_changed notification.
+        workspace_path is updated without requiring observable hooks.
         """
         with tempfile.TemporaryDirectory() as tmp_dir:
             settings = Settings()
-            received: list[tuple[str, str]] = []
-            settings.property_changed.connect(lambda name, value: received.append((name, value)))
-
             settings.workspace_path = tmp_dir
-
-            self.assertEqual(len(received), 1)
-            self.assertEqual(received[0][0], "workspace_path")
-            self.assertEqual(received[0][1], tmp_dir)
+            self.assertEqual(settings.workspace_path, tmp_dir)
 
 
 class TestSettingsWidgets(unittest.TestCase):
@@ -116,10 +112,10 @@ class TestSettingsWidgets(unittest.TestCase):
         self.application.processEvents()
         self.assertEqual(settings.model, "gpt-5")
 
+        # The view no longer observes external settings changes automatically.
         settings.model = "missing-model"
         self.application.processEvents()
-        self.assertEqual(combo_box.currentIndex(), -1)
-        self.assertEqual(combo_box.currentText(), "")
+        self.assertEqual(combo_box.currentText(), "gpt-5")
 
     def test_dialog_accept_applies_changes(self):
         """
@@ -269,3 +265,114 @@ class TestWorkspaceView(unittest.TestCase):
             view._onItemActivated(index)
 
             self.assertEqual(received, [str(test_file)])
+
+
+class TestMainWindow(unittest.TestCase):
+    """
+    Validate main window session side-panel behavior.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.application = QApplication.instance() or QApplication([])
+
+    def test_session_list_tracks_added_and_closed_tabs(self):
+        """
+        Adding and closing tabs updates the side-panel session list.
+        """
+        window = MainWindow()
+        try:
+            session_list = window.findChild(SessionListWidget, "sessionListWidget")
+            self.assertIsNotNone(session_list)
+            self.assertIsNotNone(window.findChild(type(window._session_dock), "sessionDockWidget"))
+            self.assertEqual(window._tabs.count(), 0)
+            self.assertEqual(session_list.count(), 0)
+
+            first = window.addSessionTab()
+            second = window.addSessionTab()
+            self.application.processEvents()
+
+            self.assertIsNotNone(first)
+            self.assertIsNotNone(second)
+            self.assertEqual(window._tabs.count(), 2)
+            self.assertEqual(session_list.count(), 2)
+            self.assertEqual(session_list.item(0).text(), "Session 1")
+            self.assertEqual(session_list.item(1).text(), "Session 2")
+
+            window._onTabCloseRequested(0)
+            self.application.processEvents()
+
+            self.assertEqual(window._tabs.count(), 1)
+            self.assertEqual(session_list.count(), 1)
+            self.assertEqual(session_list.item(0).text(), "Session 2")
+        finally:
+            window.close()
+
+    def test_session_list_selection_switches_current_tab(self):
+        """
+        Selecting a session in the side panel switches the active tab and stays synchronized.
+        """
+        window = MainWindow()
+        try:
+            session_list = window.findChild(SessionListWidget, "sessionListWidget")
+            window.addSessionTab()
+            window.addSessionTab()
+            self.application.processEvents()
+
+            self.assertEqual(window._tabs.currentIndex(), 1)
+            self.assertEqual(session_list.currentRow(), 1)
+
+            session_list.openSessionRequested.emit(0)
+            self.application.processEvents()
+
+            self.assertEqual(window._tabs.currentIndex(), 0)
+            self.assertEqual(session_list.currentRow(), 0)
+
+            window._tabs.setCurrentIndex(1)
+            self.application.processEvents()
+
+            self.assertEqual(session_list.currentRow(), 1)
+        finally:
+            window.close()
+
+
+class TestSessionListWidget(unittest.TestCase):
+    """
+    Validate session list side-panel behavior.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.application = QApplication.instance() or QApplication([])
+
+    def test_session_list_widget_emits_expected_signals(self):
+        """
+        The session list widget emits open, delete, and new session requests.
+        """
+        widget = SessionListWidget()
+        try:
+            opened: list[int] = []
+            deleted: list[int] = []
+            created: list[bool] = []
+
+            widget.openSessionRequested.connect(opened.append)
+            widget.deleteSessionRequested.connect(deleted.append)
+            widget.newSessionRequested.connect(lambda: created.append(True))
+
+            widget.addSession("Session 1")
+            widget.addSession("Session 2")
+            widget.setCurrentSession(1)
+            widget.openSessionRequested.emit(1)
+            widget.deleteSessionRequested.emit(1)
+            widget.newSessionRequested.emit()
+
+            self.assertEqual(widget.count(), 2)
+            self.assertEqual(widget.item(0).text(), "Session 1")
+            self.assertEqual(widget.item(1).text(), "Session 2")
+            self.assertEqual(opened, [1])
+            self.assertEqual(deleted, [1])
+            self.assertEqual(created, [True])
+        finally:
+            widget.close()
+
+

@@ -15,16 +15,20 @@ from PySide6.QtGui import QAction, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDockWidget,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QPushButton,
     QSizePolicy,
     QStatusBar,
     QTabWidget,
     QToolBar,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -384,6 +388,120 @@ class SessionWidget(QWidget):
         self.workspaceChanged.emit(self.workspacePath)
 
 
+class SessionListWidget(QWidget):
+    """
+    Side-panel widget used to manage and select session tabs.
+    """
+
+    openSessionRequested = Signal(int)
+    deleteSessionRequested = Signal(int)
+    newSessionRequested = Signal()
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent=parent)
+        self.setObjectName("sessionListWidget")
+
+        self._new_button = QPushButton("New Session", self)
+        self._new_button.setIcon(qtawesome.icon("mdi6.plus", color="darkgreen"))
+        self._new_button.clicked.connect(self._onNewSessionClicked)
+        self._delete_button = QPushButton("Delete Session", self)
+        self._delete_button.setIcon(qtawesome.icon("mdi6.delete-outline", color="darkred"))
+        self._delete_button.clicked.connect(self._onDeleteSessionClicked)
+        self._list_widget = QListWidget(parent=self)
+        self._list_widget.setObjectName("sessionListItems")
+        self._list_widget.setAlternatingRowColors(True)
+        self._list_widget.currentRowChanged.connect(self._onCurrentRowChanged)
+
+        button_layout = QHBoxLayout()
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.addWidget(self._new_button)
+        button_layout.addWidget(self._delete_button)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(6)
+        layout.addLayout(button_layout)
+        layout.addWidget(self._list_widget)
+
+        self._updateDeleteButton()
+
+    def addSession(self, title: str, icon=None):
+        """
+        Add a session entry to the list.
+        """
+        if icon is None:
+            icon = qtawesome.icon("mdi6.comment-multiple-outline")
+
+        self._list_widget.addItem(QListWidgetItem(icon, title))
+        self._updateDeleteButton()
+
+    def removeSession(self, index: int):
+        """
+        Remove the session entry at the specified index.
+        """
+        item = self._list_widget.takeItem(index)
+        if item is not None:
+            del item
+        self._updateDeleteButton()
+
+    def count(self) -> int:
+        """
+        Return the number of tracked sessions.
+        """
+        return self._list_widget.count()
+
+    def item(self, index: int) -> QListWidgetItem | None:
+        """
+        Return a session list item by index.
+        """
+        return self._list_widget.item(index)
+
+    def currentRow(self) -> int:
+        """
+        Return the currently selected session row.
+        """
+        return self._list_widget.currentRow()
+
+    def setCurrentSession(self, index: int):
+        """
+        Select the specified session row without emitting open requests.
+        """
+        self._list_widget.blockSignals(True)
+        self._list_widget.setCurrentRow(index)
+        self._list_widget.blockSignals(False)
+        self._updateDeleteButton()
+
+    def _onCurrentRowChanged(self, index: int):
+        """
+        Forward list selection changes as session-open requests.
+        """
+        self._updateDeleteButton()
+        if index >= 0:
+            self.openSessionRequested.emit(index)
+
+    def _onDeleteSessionClicked(self):
+        """
+        Emit a delete request for the selected session.
+        """
+        index = self._list_widget.currentRow()
+        if index >= 0:
+            self.deleteSessionRequested.emit(index)
+
+    def _onNewSessionClicked(self):
+        """
+        Emit a request to create a new session.
+        """
+        self.newSessionRequested.emit()
+
+    def _updateDeleteButton(self):
+        """
+        Enable deletion only when a removable session is selected.
+        """
+        current_row = self._list_widget.currentRow()
+        can_delete = self._list_widget.count() > 1 and current_row >= 0
+        self._delete_button.setEnabled(can_delete)
+
+
 class MainWindow(QMainWindow):
     """
     Main window for qassistant GUI. This is a placeholder for the actual UI.
@@ -393,10 +511,19 @@ class MainWindow(QMainWindow):
         super().__init__(**kwargs)
         self.setWindowTitle("qassistant")
         self._settings = Settings()
+        self._session_list_widget = SessionListWidget(self)
+        self._session_list_widget.openSessionRequested.connect(self._onSessionOpenRequested)
+        self._session_list_widget.deleteSessionRequested.connect(self._onTabCloseRequested)
+        self._session_list_widget.newSessionRequested.connect(self.addSessionTab)
+        self._session_dock = QDockWidget("Sessions", self)
+        self._session_dock.setObjectName("sessionDockWidget")
+        self._session_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+        self._session_dock.setWidget(self._session_list_widget)
         self._tabs = QTabWidget()
         self._tabs.setTabsClosable(True)
         self._tabs.tabCloseRequested.connect(self._onTabCloseRequested)
         self._tabs.currentChanged.connect(self._onCurrentTabChanged)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._session_dock)
         self.setCentralWidget(self._tabs)
         self._tool_bar = QToolBar("Main", self)
         self._tool_bar.setMovable(False)
@@ -583,15 +710,34 @@ class MainWindow(QMainWindow):
         if self._tabs.count() > 1:
             widget = self._tabs.widget(index)
             self._tabs.removeTab(index)
+            self._session_list_widget.removeSession(index)
             if widget is not None:
                 widget.deleteLater()
+            self._syncSessionListSelection()
             self._updateStatusBar()
 
     def _onCurrentTabChanged(self, _: int) -> None:
         """
         Refresh status bar when active tab changes.
         """
+        self._syncSessionListSelection()
         self._updateStatusBar()
+
+    def _onSessionOpenRequested(self, index: int) -> None:
+        """
+        Switch the active tab when the user selects a session in the side panel.
+        """
+        if index < 0 or index >= self._tabs.count() or index == self._tabs.currentIndex():
+            return
+
+        self._tabs.setCurrentIndex(index)
+
+    def _syncSessionListSelection(self) -> None:
+        """
+        Keep the session side panel selection synchronized with the active tab.
+        """
+        current_index = self._tabs.currentIndex()
+        self._session_list_widget.setCurrentSession(current_index)
 
     def _onSessionWorkAreaChanged(self, path: str) -> None:
         """
@@ -660,8 +806,10 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(
             chat_widget, qtawesome.icon("mdi6.comment-multiple-outline"), f"Session {n}"
         )
+        self._session_list_widget.addSession(f"Session {n}")
         self._tabs.setCurrentWidget(chat_widget)
 
+        self._syncSessionListSelection()
         self._updateStatusBar()
         return chat_widget
 

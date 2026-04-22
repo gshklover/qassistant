@@ -7,57 +7,7 @@ from abc import ABC, abstractmethod
 import dataclasses
 import enum
 import pandas
-import traceback
-from typing import Any, Callable, Generic, TypeVarTuple
-
-
-Args = TypeVarTuple('Args')
-
-
-class Signal(Generic[*Args]):
-    """
-    Basic signal implementation for event handling and change notification.
-    """
-    __slots__ = ['_subscribers']
-
-    def __init__(self):
-        self._subscribers = []
-
-    def connect(self, callback: Callable):
-        """
-        Connect a new subscriber callback to the signal.
-        """
-        self._subscribers.append(callback)
-
-    def disconnect(self, callback: Callable):
-        """
-        Disconnect a subscriber callback from the signal.
-        """
-        self._subscribers.remove(callback)
-
-    def emit(self, *args: *Args, **kwargs):
-        """
-        Emit the signal and call all subscriber callbacks with the provided arguments.
-        """
-        for callback in self._subscribers:
-            try:
-                callback(*args, **kwargs)
-            except Exception:  # noqa
-                traceback.print_exc()
-
-
-@dataclasses.dataclass(slots=True)
-class IObservable:
-    """
-    Interface for observable objects that can emit signals on state changes.
-    """
-    property_changed: Signal[str, Any] = dataclasses.field(default_factory=Signal)
-
-    def _on_property_changed(self, property_name: str, value: Any):
-        """
-        Emit a property changed signal when an observable property is updated.
-        """
-        self.property_changed.emit(property_name, value)
+from typing import Any
 
 
 class AgentEventHandler(ABC):

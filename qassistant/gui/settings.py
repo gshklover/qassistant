@@ -5,20 +5,18 @@ import pathlib
 from PySide6.QtCore import QSettings, QSignalBlocker, Signal as QtSignal
 from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QFormLayout, QVBoxLayout, QWidget
 
-from ..agent.common import IObservable
 from ..agent import DEFAULT_MODEL
 
 
 _QSETTINGS_KEY_WORKSPACE = "workspace_path"
 
 
-class Settings(IObservable):
+class Settings:
     """
     Observable application settings.
     """
 
     def __init__(self, model: str = DEFAULT_MODEL, available_models: list[str] | None = None):
-        super().__init__()
         self._model = model
         self._available_models: list[str] = sorted(set(available_models)) if available_models else []
         self._qsettings = QSettings("qassistant", "qassistant")
@@ -37,7 +35,6 @@ class Settings(IObservable):
             return
 
         self._model = normalized_value
-        self._on_property_changed("model", self._model)
 
     @property
     def available_models(self) -> list[str]:
@@ -53,7 +50,6 @@ class Settings(IObservable):
             return
 
         self._available_models = values
-        self._on_property_changed("available_models", self.available_models)
 
     @property
     def workspace_path(self) -> str:
@@ -72,7 +68,6 @@ class Settings(IObservable):
         if normalized and not pathlib.Path(normalized).is_dir():
             return
         self._qsettings.setValue(_QSETTINGS_KEY_WORKSPACE, normalized)
-        self._on_property_changed("workspace_path", normalized)
 
     def clone(self) -> "Settings":
         """
@@ -121,22 +116,8 @@ class SettingsView(QWidget):
         if self._settings is settings:
             return
 
-        if self._settings is not None:
-            self._settings.property_changed.disconnect(self._onSettingsChanged)
-
         self._settings = settings
-
-        if self._settings is not None:
-            self._settings.property_changed.connect(self._onSettingsChanged)
-
         self._syncFromSettings()
-
-    def _onSettingsChanged(self, property_name: str, value):
-        """
-        Refresh the UI after model changes.
-        """
-        if property_name in {"model", "available_models"}:
-            self._syncFromSettings()
 
     def _syncFromSettings(self):
         """
@@ -202,3 +183,4 @@ class SettingsDlg(QDialog):
         Restore default values in the working copy.
         """
         self._working_settings.reset()
+        self._settings_view._syncFromSettings()
