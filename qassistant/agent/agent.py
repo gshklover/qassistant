@@ -16,10 +16,8 @@ from openai import AsyncOpenAI
 import os
 import pathlib
 from PySide6.QtCore import QObject, Signal
-import traceback
 from typing import Any, Callable, Sequence, Optional
 
-from .common import SessionEventHandler
 from .tools.pythonshell import PythonShell
 
 
@@ -323,7 +321,6 @@ class Session(QObject):
     Wraps around a single session with start/stop/reset and tool integration.
     """
 
-    # SessionEventHandler-compatible signals exposed for Qt consumers.
     # Signature: (tool_name: str | None, arguments: Any, tool_call_id: str | None, interaction_id: str | None)
     toolExecutionStart = Signal(object, object, object, object)
     # Signature: (tool_call_id: str | None, partial_output: str | None)
@@ -364,7 +361,6 @@ class Session(QObject):
         api: AgentAPI,
         model: str = DEFAULT_MODEL,
         tools: list[str | Callable] | None = None,
-        event_handlers: list[SessionEventHandler] | None = None,
         workspace_path: str = "",
         parent: QObject = None
     ):
@@ -384,7 +380,6 @@ class Session(QObject):
             as_tool(self._shell.get_variables, name='python_shell_get_variables'),
             *[as_tool(tool) for tool in (tools or ())],
         ]
-        self._event_handlers = list(event_handlers or ())
         self._config = dict(
             on_permission_request=copilot.session.PermissionHandler.approve_all,
             model=model,
@@ -577,8 +572,6 @@ class Session(QObject):
                 "event_type": event.type.value,
                 "event": event,
             })
-            for event_handler in self._event_handlers:
-                await event_handler.on_unknown_event(event.type.value, event)
             return
 
         method_name, attributes = event_info
@@ -597,14 +590,6 @@ class Session(QObject):
             self._usage = usage_percentage
 
         self._emitEventSignal(method_name, args)
-
-        for event_handler in self._event_handlers:
-            handler_method = getattr(event_handler, method_name, None)
-            if handler_method is not None:
-                try:
-                    await handler_method(**args)
-                except Exception:
-                    traceback.print_exc()
 
     def _emitEventSignal(self, method_name: str, args: dict[str, Any]):
         """

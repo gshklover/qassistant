@@ -6,7 +6,7 @@ import asyncio
 import sys
 import traceback
 from contextlib import contextmanager
-from typing import Optional
+from typing import Optional, Any
 
 import PySide6.QtAsyncio as QtAsyncio
 import qtawesome
@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from .._version import __version__
-from ..agent import AgentAPI, CustomAgentConfig, SessionEventHandler, Message, Role, Session, TextContent, load_agents
+from ..agent import AgentAPI, CustomAgentConfig, Message, Role, Session, TextContent, load_agents
 from ..agent.common import MessageState, ToolCallContent
 from .settings import Settings, SettingsDlg
 from .widgets import ChatWidget, UsagePieWidget
@@ -55,54 +55,6 @@ def wait_cursor():
         QApplication.restoreOverrideCursor()
 
 
-class _SessionStreamHandler(SessionEventHandler):
-    """
-    Bridge agent streaming events to the owning SessionWidget.
-    """
-
-    def __init__(self, widget: "SessionWidget"):
-        self._widget = widget
-
-    async def on_tool_execution_start(
-        self, tool_name, arguments, tool_call_id, interaction_id
-    ):
-        self._widget._onToolExecutionStart(tool_name, arguments, tool_call_id)
-        self._widget._onMessageStateChanged(MessageState.EXECUTING)
-
-    async def on_tool_execution_complete(
-        self, tool_call_id, success, result, error, interaction_id
-    ):
-        self._widget._onToolExecutionComplete(tool_call_id, success, result, error)
-        self._widget._onMessageStateChanged(MessageState.PROCESSING)
-
-    async def on_assistant_message_delta(
-        self, delta_content, message_id, interaction_id
-    ):
-        if delta_content:
-            self._widget._onMessageDelta(delta_content)
-
-    async def on_assistant_message(
-        self, content, message_id, interaction_id, reasoning_text, tool_requests
-    ):
-        if content:
-            self._widget._setAssistantMessage(content)
-
-    async def on_assistant_turn_end(self, turn_id):
-        # will be handled by assistant idle
-        # self._widget._finalizeResponse()
-        pass
-
-    async def on_session_idle(self, background_tasks):
-        self._widget._onSessionIdle()
-
-    async def on_session_error(self, error_type, message, error, status_code, url):
-        details = message or str(error) or "unknown session error"
-        self._widget._onSessionError(details)
-
-    async def on_session_usage(self, usage_percentage):
-        self._widget._onSessionUsage(usage_percentage)
-
-
 class SessionWidget(QWidget):
     """
     Widget representing a single agent session.
@@ -122,13 +74,12 @@ class SessionWidget(QWidget):
         super().__init__(parent=parent)
         self._api = api
         self._settings = settings
-        self._stream_handler = _SessionStreamHandler(self)
         self._agent = Session(
             api=self._api,
             model=settings.model,
-            event_handlers=[self._stream_handler],
             workspace_path=workspace_path,
         )
+        self._bindAgentSignals()
         self._chat_widget = ChatWidget(
             parent=self,
             sendRequested=self._onSendRequested,
@@ -145,6 +96,18 @@ class SessionWidget(QWidget):
         layout.setRowStretch(0, 1)
         layout.setColumnStretch(0, 1)
         layout.setContentsMargins(0, 0, 0, 0)
+
+    def _bindAgentSignals(self):
+        """
+        Connect Session signals directly to UI update handlers.
+        """
+        self._agent.toolExecutionStart.connect(self._onToolExecutionStart)
+        self._agent.toolExecutionComplete.connect(self._onToolExecutionComplete)
+        self._agent.assistantMessageDelta.connect(self._onAssistantMessageDelta)
+        self._agent.assistantMessage.connect(self._onAssistantMessage)
+        self._agent.sessionIdle.connect(self._onSessionIdle)
+        self._agent.sessionError.connect(self._onSessionErrorEvent)
+        self._agent.sessionUsage.connect(self._onSessionUsage)
 
     @property
     def workspacePath(self) -> str:
@@ -236,6 +199,27 @@ class SessionWidget(QWidget):
         response_text.text += delta
         self._chat_widget.updateMessage(self._response_message)
 
+    def _onAssistantMessageDelta(self, delta_content: str | None, message_id: str | None, interaction_id: str | None):
+        """
+        Adapter for assistantMessageDelta signal payload.
+        """
+        if delta_content:
+            self._onMessageDelta(delta_content)
+
+    def _onAssistantMessage(
+        self,
+        content: str | None,
+        message_id: str | None,
+        interaction_id: str | None,
+        reasoning_text: str | None,
+        tool_requests,
+    ):
+        """
+        Adapter for assistantMessage signal payload.
+        """
+        if content:
+            self._setAssistantMessage(content)
+
     def _setAssistantMessage(self, content: str) -> None:
         """
         Apply final assistant message content when no deltas were produced.
@@ -268,11 +252,17 @@ class SessionWidget(QWidget):
         return response_text
 
     def _onToolExecutionStart(
-        self, tool_name: str | None, arguments, tool_call_id: str | None
+        self,
+        tool_name: str | None,
+        arguments,
+        tool_call_id: str | None,
+        interaction_id: str | None,
     ):
         """
         Append a tool call content block when tool execution starts.
         """
+        self._onMessageStateChanged(MessageState.EXECUTING)
+
         if self._response_message is None:
             return
 
@@ -288,11 +278,18 @@ class SessionWidget(QWidget):
         self._chat_widget.updateMessage(self._response_message)
 
     def _onToolExecutionComplete(
-        self, tool_call_id: str | None, success: bool | None, result, error
+        self,
+        tool_call_id: str | None,
+        success: bool | None,
+        result,
+        error,
+        interaction_id: str | None,
     ):
         """
         Update tool call content with completion result.
         """
+        self._onMessageStateChanged(MessageState.PROCESSING)
+
         if self._response_message is None:
             return
 
@@ -325,7 +322,14 @@ class SessionWidget(QWidget):
         """
         self.usageChanged.emit(usage_percentage)
 
-    def _onSessionIdle(self) -> None:
+    def _onSessionErrorEvent(self, error_type: str | None, message: str | None, error, status_code: int | None, url: str | None):
+        """
+        Adapter for sessionError signal payload.
+        """
+        details = message or str(error) or "unknown session error"
+        self._onSessionError(details)
+
+    def _onSessionIdle(self, background_tasks=None) -> None:
         """
         Session is idle; ensure the current response is finalized.
         """
