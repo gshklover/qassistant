@@ -399,6 +399,7 @@ class SessionWidget(QWidget):
 class SessionListWidget(QWidget):
     """
     Side-panel widget used to manage and select session tabs.
+    Reflects the sessions available via AgentAPI and uses its Qt signals for live updates.
     """
 
     openSessionRequested = Signal(str)
@@ -407,7 +408,11 @@ class SessionListWidget(QWidget):
         super().__init__(parent=parent)
         self.setObjectName("sessionListWidget")
         self._api = api
-        self._sessions = {}
+        self._sessions: dict[str, Any] = {}
+
+        api.sessionCreated.connect(self._onApiSessionCreated)
+        api.sessionDeleted.connect(self._onApiSessionDeleted)
+        api.sessionUpdated.connect(self._onApiSessionUpdated)
 
         self._delete_button = QPushButton(
             qtawesome.icon("mdi6.delete-outline", color="darkred"), "", self
@@ -444,97 +449,68 @@ class SessionListWidget(QWidget):
             loop = asyncio.get_running_loop()
             loop.create_task(self.loadSessions())
         except RuntimeError:
-            # No asyncio loop yet; the list can still be populated via addSession.
             pass
 
     async def loadSessions(self):
         """
-        Load existing sessions from the Copilot client and display them.
+        Load existing sessions from the Copilot API and refresh the list.
         """
-        self._sessions = {}
         try:
             sessions = await self._api.list_sessions()
         except Exception:
             traceback.print_exc()
             return
 
+        self._sessions = {}
         self._list_widget.blockSignals(True)
         self._list_widget.clear()
 
         icon = qtawesome.icon("mdi6.comment-multiple-outline")
-
-        for index, session in enumerate(sessions):
+        for session in sessions:
             session_id = session.sessionId
-            summary = session.summary or ''
+            summary = session.summary or ""
             self._sessions[session_id] = session
-
-            item = QListWidgetItem(icon, summary)
+            item = QListWidgetItem(icon, str(summary))
             item.setData(Qt.ItemDataRole.UserRole, session_id)
             self._list_widget.addItem(item)
 
         self._list_widget.blockSignals(False)
         self._updateDeleteButton()
 
-    @staticmethod
-    def _sessionIdFromMetadata(session, index: int) -> str:
-        """
-        Derive a stable session id string from API metadata.
-        """
-        session_id = getattr(session, "session_id", None) or getattr(session, "id", None)
-        if session_id:
-            return str(session_id)
-        return f"session-{index + 1}"
-
-    @staticmethod
-    def _sessionTitleFromMetadata(session, index: int) -> str:
-        """
-        Resolve a human-readable title for a listed session.
-        """
-        title = (
-            getattr(session, "title", None)
-            or getattr(session, "name", None)
-            or getattr(session, "description", None)
-        )
-        if title:
-            return str(title)
-
-        session_id = getattr(session, "session_id", None) or getattr(session, "id", None)
-        if session_id:
-            return str(session_id)
-
-        return f"Session {index + 1}"
-
     def indexForSessionId(self, session_id: str) -> int:
         """
         Return the current row index for the given session id, or -1 if not found.
         """
-        try:
-            return self._session_ids.index(session_id)
-        except ValueError:
-            return -1
+        for i in range(self._list_widget.count()):
+            item = self._list_widget.item(i)
+            if item is not None and item.data(Qt.ItemDataRole.UserRole) == session_id:
+                return i
+        return -1
 
     def removeSessionById(self, session_id: str):
         """
-        Remove a session entry by id.
+        Remove a session entry by its id.
         """
         index = self.indexForSessionId(session_id)
         if index >= 0:
-            self.removeSession(index)
+            self._list_widget.takeItem(index)
+            self._sessions.pop(session_id, None)
+            self._updateDeleteButton()
 
-    def removeSession(self, index: int):
+    def sessionTitle(self, session_id: str) -> str:
         """
-        Remove the session entry at the specified index.
+        Return display title for a known session id.
         """
-        item = self._list_widget.takeItem(index)
-        if item is not None:
-            del item
-        if 0 <= index < len(self._session_ids):
-            self._session_ids.pop(index)
-        self._updateDeleteButton()
+        index = self.indexForSessionId(session_id)
+        if index >= 0:
+            item = self._list_widget.item(index)
+            if item is not None:
+                return item.text()
+        return session_id
 
     def count(self) -> int:
         """
-        Return the number of tracked sessions.
+        Return the number of listed sessions.
         """
         return self._list_widget.count()
 
@@ -550,15 +526,6 @@ class SessionListWidget(QWidget):
         """
         return self._list_widget.currentRow()
 
-    def setCurrentSession(self, index: int):
-        """
-        Select the specified session row without emitting open requests.
-        """
-        self._list_widget.blockSignals(True)
-        self._list_widget.setCurrentRow(index)
-        self._list_widget.blockSignals(False)
-        self._updateDeleteButton()
-
     def _onCurrentRowChanged(self, index: int):
         """
         Refresh state when selection changes.
@@ -569,14 +536,13 @@ class SessionListWidget(QWidget):
         """
         Open the specific session item that was double-clicked.
         """
-        index = self._list_widget.row(item)
-        if index >= 0:
-            session_id = item.data(Qt.ItemDataRole.UserRole) or self._session_ids[index]
+        session_id = item.data(Qt.ItemDataRole.UserRole)
+        if session_id:
             self.openSessionRequested.emit(str(session_id))
 
     def _onDeleteSessionClicked(self):
         """
-        Emit a delete request for the selected session.
+        Delete the currently selected session via the API.
         """
         index = self._list_widget.currentRow()
         if index < 0:
@@ -587,26 +553,48 @@ class SessionListWidget(QWidget):
             return
 
         session_id = item.data(Qt.ItemDataRole.UserRole)
-        if session_id in self._sessions:
-            self._sessions.pop(session_id)
-            self._list_widget.takeItem(index)
-            asyncio.create_task(self._asyncDeleteSession(session_id))
+        if not session_id:
+            return
+
+        # Remove from UI immediately; signal handler will clean up if needed.
+        self._list_widget.takeItem(index)
+        self._sessions.pop(session_id, None)
+        self._updateDeleteButton()
+        asyncio.create_task(self._asyncDeleteSession(session_id))
 
     async def _asyncDeleteSession(self, session_id: str):
         """
-        Delete specified session asynchronously
+        Call the API to delete the specified session.
         """
         try:
             await self._api.delete_session(session_id)
-        except:
+        except Exception:
             traceback.print_exc()
+
+    def _onApiSessionCreated(self, session_id: str):
+        """
+        Reload the session list when a new session is created.
+        """
+        self._scheduleLoadSessions()
+
+    def _onApiSessionDeleted(self, session_id: str):
+        """
+        Remove the session from the list when it is deleted externally.
+        """
+        self.removeSessionById(session_id)
+
+    def _onApiSessionUpdated(self, session_id: str):
+        """
+        Reload the session list when a session is updated.
+        """
+        self._scheduleLoadSessions()
 
     def _updateDeleteButton(self):
         """
-        Enable deletion only when a removable session is selected.
+        Enable deletion only when a session is selected and more than one exists.
         """
         current_row = self._list_widget.currentRow()
-        can_delete = self._list_widget.count() > 1 and current_row >= 0
+        can_delete = self._list_widget.count() > 0 and current_row >= 0
         self._delete_button.setEnabled(can_delete)
 
 
@@ -623,6 +611,7 @@ class MainWindow(QMainWindow):
         self._tab_session_ids: list[str] = []
         self._session_list_widget = SessionListWidget(api=self._api, parent=self)
         self._session_list_widget.openSessionRequested.connect(self._onSessionOpenRequested)
+        api.sessionDeleted.connect(self._onApiSessionDeleted)
         self._session_dock = QDockWidget("Sessions", self)
         self._session_dock.setObjectName("sessionDockWidget")
         self._session_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
@@ -879,6 +868,16 @@ class MainWindow(QMainWindow):
 
         if index != self._tabs.currentIndex():
             self._tabs.setCurrentIndex(index)
+
+    def _onApiSessionDeleted(self, session_id: str) -> None:
+        """
+        Close any open tab whose session was deleted via the API.
+        """
+        try:
+            index = self._tab_session_ids.index(session_id)
+        except ValueError:
+            return
+        self._removeTab(index)
 
     def _onSessionWorkAreaChanged(self, path: str) -> None:
         """

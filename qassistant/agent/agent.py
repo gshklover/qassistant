@@ -15,10 +15,11 @@ import yaml
 from openai import AsyncOpenAI
 import os
 import pathlib
+from PySide6.QtCore import QObject, Signal
 import traceback
 from typing import Any, Callable, Sequence
 
-from .common import AgentEventHandler, SessionEventHandler, BaseSession
+from .common import SessionEventHandler, BaseSession
 from .tools.pythonshell import PythonShell
 
 
@@ -30,22 +31,27 @@ CLIENT_CONNECTING_TIMEOUT = 5.0  # seconds to wait while client is already conne
 CLIENT_CONNECTING_POLL_INTERVAL = 0.05  # seconds between state checks
 
 
-class AgentAPI:
+class AgentAPI(QObject):
     """
     Thin wrapper around a shared CopilotClient instance.
+    Inherits QObject to expose session lifecycle events as Qt signals.
     """
 
-    def __init__(self, event_handlers: list[AgentEventHandler] | None = None):
+    sessionCreated = Signal(str)
+    sessionDeleted = Signal(str)
+    sessionUpdated = Signal(str)
+
+    def __init__(self, parent: QObject = None):
         """
         Initialize the client
         """
+        super().__init__(parent)
         self._models = None
         self._client_start_lock = asyncio.Lock()
-        self._event_handlers = list(event_handlers or ())
         self._client = copilot.CopilotClient(auto_start=True)
-        self._client.on("session.created", lambda event: self._dispatch_event("on_session_created", event))
-        self._client.on("session.deleted", lambda event: self._dispatch_event("on_session_deleted", event))
-        self._client.on("session.updated", lambda event: self._dispatch_event("on_session_updated", event))
+        self._client.on("session.created", lambda event: self.sessionCreated.emit(getattr(event, "sessionId", "")))
+        self._client.on("session.deleted", lambda event: self.sessionDeleted.emit(getattr(event, "sessionId", "")))
+        self._client.on("session.updated", lambda event: self.sessionUpdated.emit(getattr(event, "sessionId", "")))
 
     async def _ensure_client_started(self):
         """
@@ -63,6 +69,9 @@ class AgentAPI:
                     state = self._client.get_state()
                     if state != "connecting":
                         break
+
+            if state == "connecting":
+                raise TimeoutError(f"Copilot client remained in 'connecting' state for {CLIENT_CONNECTING_TIMEOUT}s")
 
             if state == "connected":
                 return
@@ -143,23 +152,6 @@ class AgentAPI:
             agent=agent,
         )
 
-    def _dispatch_event(self, method_name: str, event):
-        """
-        Dispatch lifecycle notifications to registered AgentAPI event handlers.
-        """
-        session_id = getattr(event, "sessionId", "")
-        for event_handler in self._event_handlers:
-            handler_method = getattr(event_handler, method_name, None)
-            if handler_method is None:
-                continue
-
-            async def call_handler(method=handler_method, sid=session_id):
-                try:
-                    await method(sid)
-                except Exception:
-                    traceback.print_exc()
-
-            asyncio.create_task(call_handler())
 
 
 class CustomAgentConfig(copilot.session.CustomAgentConfig):

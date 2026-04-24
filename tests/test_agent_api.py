@@ -2,15 +2,24 @@
 Unit tests for AgentAPI client startup behavior.
 """
 import asyncio
+import os
 import unittest
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import QApplication
+
 from qassistant.agent.agent import AgentAPI
 
 
 class TestAgentAPI(unittest.IsolatedAsyncioTestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
     """
     Validate AgentAPI startup guards for read-only list APIs.
     """

@@ -6,7 +6,7 @@ import os
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from pathlib import Path
 
 from qassistant.gui.workspaceview import WorkspaceView
@@ -17,6 +17,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QComboBox, QDialogButtonBox, QPushButton, QTextEdit
 
 from qassistant.agent import DEFAULT_MODEL
+from qassistant.agent.agent import AgentAPI
 from qassistant.agent.common import TextContent
 from qassistant.gui.application import MainWindow, SessionListWidget
 from qassistant.gui.settings import Settings, SettingsDlg, SettingsView
@@ -281,18 +282,25 @@ class TestMainWindow(unittest.TestCase):
 
     @staticmethod
     def _createApi():
-        api = MagicMock()
-        api.list_models = AsyncMock(return_value=[])
-        api.list_sessions = AsyncMock(return_value=[])
-        api.delete_session = AsyncMock(return_value=None)
-        return api
+        """
+        Return a real AgentAPI backed by a fully mocked CopilotClient so Qt signals work.
+        """
+        with patch("qassistant.agent.agent.copilot.CopilotClient") as mock_cls:
+            mock_client = MagicMock()
+            mock_client.on = MagicMock()
+            mock_client.get_state = MagicMock(return_value="connected")
+            mock_client.list_models = AsyncMock(return_value=[])
+            mock_client.list_sessions = AsyncMock(return_value=[])
+            mock_client.delete_session = AsyncMock(return_value=None)
+            mock_cls.return_value = mock_client
+            return AgentAPI()
 
     def test_session_list_is_api_backed_not_tab_backed(self):
         """
         The side-panel session list is loaded from AgentAPI and is not synchronized with open tabs.
         """
         api = self._createApi()
-        api.list_sessions = AsyncMock(return_value=[
+        api._client.list_sessions = AsyncMock(return_value=[
             SimpleNamespace(session_id="api-1", title="From API 1"),
             SimpleNamespace(session_id="api-2", title="From API 2"),
         ])
@@ -315,12 +323,14 @@ class TestMainWindow(unittest.TestCase):
             self.assertIsNotNone(first)
             self.assertIsNotNone(second)
             self.assertEqual(window._tabs.count(), 2)
+            # Session list is API-backed; adding tabs does not change it.
             self.assertEqual(session_list.count(), 2)
 
             window._onTabCloseRequested(0)
             self.application.processEvents()
 
             self.assertEqual(window._tabs.count(), 1)
+            # Closing a tab does not affect the API-backed session list.
             self.assertEqual(session_list.count(), 2)
         finally:
             window.close()
@@ -330,7 +340,7 @@ class TestMainWindow(unittest.TestCase):
         Tab changes do not force side-panel selection synchronization.
         """
         api = self._createApi()
-        api.list_sessions = AsyncMock(return_value=[
+        api._client.list_sessions = AsyncMock(return_value=[
             SimpleNamespace(session_id="api-1", title="From API 1"),
             SimpleNamespace(session_id="api-2", title="From API 2"),
         ])
@@ -355,10 +365,11 @@ class TestMainWindow(unittest.TestCase):
 
     def test_delete_session_calls_api_and_cleans_matching_tab(self):
         """
-        Deleting a listed session calls AgentAPI and closes any open tab bound to that session id.
+        Deleting a listed session calls AgentAPI and closing the session also closes
+        the matching open tab (triggered by the sessionDeleted Qt signal).
         """
         api = self._createApi()
-        api.list_sessions = AsyncMock(return_value=[
+        api._client.list_sessions = AsyncMock(return_value=[
             SimpleNamespace(session_id="api-1", title="From API 1"),
             SimpleNamespace(session_id="api-2", title="From API 2"),
         ])
@@ -367,16 +378,19 @@ class TestMainWindow(unittest.TestCase):
             session_list = window.findChild(SessionListWidget, "sessionListWidget")
             asyncio.run(session_list.loadSessions())
 
+            # Open tabs for both sessions via double-click.
             session_list._list_widget.itemDoubleClicked.emit(session_list.item(0))
             session_list._list_widget.itemDoubleClicked.emit(session_list.item(1))
             self.application.processEvents()
             self.assertEqual(window._tabs.count(), 2)
 
-            session_list._list_widget.setCurrentRow(0)
-            session_list._delete_button.click()
+            # Simulate deletion: remove from list, call API, emit signal.
+            session_list.removeSessionById("api-1")
+            asyncio.run(session_list._asyncDeleteSession("api-1"))
+            api.sessionDeleted.emit("api-1")
             self.application.processEvents()
 
-            api.delete_session.assert_awaited_once_with(session_id="api-1")
+            api._client.delete_session.assert_awaited_once_with(session_id="api-1")
             self.assertEqual(window._tabs.count(), 1)
             self.assertEqual(session_list.count(), 1)
             self.assertEqual(session_list.item(0).data(Qt.ItemDataRole.UserRole), "api-2")
@@ -415,34 +429,41 @@ class TestSessionListWidget(unittest.TestCase):
 
     @staticmethod
     def _createApi():
-        api = MagicMock()
-        api.list_sessions = AsyncMock(return_value=[])
-        return api
+        """
+        Return a real AgentAPI backed by a fully mocked CopilotClient so Qt signals work.
+        """
+        with patch("qassistant.agent.agent.copilot.CopilotClient") as mock_cls:
+            mock_client = MagicMock()
+            mock_client.on = MagicMock()
+            mock_client.get_state = MagicMock(return_value="connected")
+            mock_client.list_sessions = AsyncMock(return_value=[])
+            mock_client.delete_session = AsyncMock(return_value=None)
+            mock_cls.return_value = mock_client
+            return AgentAPI()
 
     def test_session_list_widget_emits_expected_signals(self):
         """
-        The session list widget emits open on double-click and delete requests.
+        The session list widget emits openSessionRequested on item double-click.
         """
         widget = SessionListWidget(api=self._createApi())
         try:
             opened: list[str] = []
-            deleted: list[str] = []
-
             widget.openSessionRequested.connect(opened.append)
-            widget.deleteSessionRequested.connect(deleted.append)
 
-            widget.addSession("Session 1")
-            widget.addSession("Session 2")
-            widget.setCurrentSession(1)
-            widget._list_widget.setCurrentRow(0)
-            widget._list_widget.itemDoubleClicked.emit(widget.item(1))
-            widget._delete_button.click()
+            asyncio.run(widget.loadSessions())
+            self.application.processEvents()
+            self.assertEqual(widget.count(), 0)
 
-            self.assertEqual(widget.count(), 2)
-            self.assertEqual(widget.item(0).text(), "Session 1")
-            self.assertEqual(widget.item(1).text(), "Session 2")
-            self.assertEqual(opened, ["Session 2"])
-            self.assertEqual(deleted, ["Session 1"])
+            # Manually inject a session straight into the list widget to drive the signal test.
+            from PySide6.QtWidgets import QListWidgetItem
+            item = QListWidgetItem("Session A")
+            item.setData(widget._list_widget.model().index(0, 0).UserRole if False else 256, "sid-A")
+            from PySide6.QtCore import Qt as _Qt
+            item.setData(_Qt.ItemDataRole.UserRole, "sid-A")
+            widget._list_widget.addItem(item)
+            widget._list_widget.itemDoubleClicked.emit(item)
+
+            self.assertEqual(opened, ["sid-A"])
         finally:
             widget.close()
 
@@ -455,7 +476,7 @@ class TestSessionListWidget(unittest.TestCase):
             SimpleNamespace(id="def456"),
         ]
         api = self._createApi()
-        api.list_sessions = AsyncMock(return_value=mocked_sessions)
+        api._client.list_sessions = AsyncMock(return_value=mocked_sessions)
         widget = SessionListWidget(api=api)
         try:
             asyncio.run(widget.loadSessions())

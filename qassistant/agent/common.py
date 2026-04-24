@@ -10,29 +10,6 @@ import pandas
 from typing import Any
 
 
-class AgentEventHandler:
-    """
-    Lifecycle handler interface for AgentAPI session list events.
-    """
-
-    async def on_session_created(self, session_id: str):
-        """
-        Called when a session is created.
-        """
-        return
-
-    async def on_session_deleted(self, session_id: str):
-        """
-        Called when a session is deleted.
-        """
-        return
-
-    async def on_session_updated(self, session_id: str):
-        """
-        Called when a session is updated.
-        """
-        return
-
 
 class SessionEventHandler(ABC):
     """
