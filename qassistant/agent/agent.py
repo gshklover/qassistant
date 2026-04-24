@@ -87,6 +87,10 @@ async def list_sessions() -> list[copilot.client.SessionMetadata]:
     return await client.list_sessions()
 
 
+
+
+
+
 # map event type to handler name & argument mapping
 _EVENT_METHOD_BY_TYPE = {
     SessionEventType.TOOL_EXECUTION_START: (

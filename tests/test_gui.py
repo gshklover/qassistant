@@ -1,9 +1,12 @@
 """
 Unit tests for GUI settings components.
 """
+import asyncio
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 from pathlib import Path
 
 from qassistant.gui.workspaceview import WorkspaceView
@@ -372,6 +375,26 @@ class TestSessionListWidget(unittest.TestCase):
             self.assertEqual(opened, [1])
             self.assertEqual(deleted, [1])
             self.assertEqual(created, [True])
+        finally:
+            widget.close()
+
+    def test_session_list_widget_loads_sessions_from_api(self):
+        """
+        loadSessions() populates the list from list_sessions() metadata.
+        """
+        widget = SessionListWidget()
+        try:
+            mocked_sessions = [
+                SimpleNamespace(session_id="abc123", title="Existing Session"),
+                SimpleNamespace(id="def456"),
+            ]
+
+            with patch("qassistant.gui.application.list_sessions", new=AsyncMock(return_value=mocked_sessions)):
+                asyncio.run(widget.loadSessions())
+
+            self.assertEqual(widget.count(), 2)
+            self.assertEqual(widget.item(0).text(), "Existing Session")
+            self.assertEqual(widget.item(1).text(), "def456")
         finally:
             widget.close()
 

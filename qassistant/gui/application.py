@@ -10,7 +10,7 @@ from typing import Optional
 
 import PySide6.QtAsyncio as QtAsyncio
 import qtawesome
-from PySide6.QtCore import QSize, Signal
+from PySide6.QtCore import QSize, Signal, QTimer
 from PySide6.QtGui import QAction, Qt
 from PySide6.QtWidgets import (
     QApplication,
@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 
 from .._version import __version__
 from ..agent import Agent, AgentEventHandler, Message, Role, TextContent, list_session_models, load_agents
-from ..agent.agent import CustomAgentConfig
+from ..agent.agent import CustomAgentConfig, list_sessions
 from ..agent.common import MessageState, ToolCallContent
 from .settings import Settings, SettingsDlg
 from .widgets import ChatWidget, UsagePieWidget
@@ -400,6 +400,7 @@ class SessionListWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent=parent)
         self.setObjectName("sessionListWidget")
+        self._session_ids: list[str] = []
 
         self._new_button = QPushButton("New Session", self)
         self._new_button.setIcon(qtawesome.icon("mdi6.plus", color="darkgreen"))
@@ -425,6 +426,74 @@ class SessionListWidget(QWidget):
 
         self._updateDeleteButton()
 
+        # Load known sessions once the Qt event loop starts.
+        QTimer.singleShot(0, self._scheduleLoadSessions)
+
+    def _scheduleLoadSessions(self):
+        """
+        Schedule asynchronous loading of existing sessions if an event loop is available.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.loadSessions())
+        except RuntimeError:
+            # No asyncio loop yet; the list can still be populated via addSession.
+            pass
+
+    async def loadSessions(self):
+        """
+        Load existing sessions from the Copilot client and display them.
+        """
+        try:
+            sessions = await list_sessions()
+        except Exception:
+            traceback.print_exc()
+            return
+
+        self._list_widget.blockSignals(True)
+        self._list_widget.clear()
+        self._session_ids.clear()
+
+        for index, session in enumerate(sessions):
+            session_id = self._sessionIdFromMetadata(session, index)
+            title = self._sessionTitleFromMetadata(session, index)
+            self._session_ids.append(session_id)
+            item = QListWidgetItem(qtawesome.icon("mdi6.comment-multiple-outline"), title)
+            item.setData(Qt.ItemDataRole.UserRole, session_id)
+            self._list_widget.addItem(item)
+
+        self._list_widget.blockSignals(False)
+        self._updateDeleteButton()
+
+    @staticmethod
+    def _sessionIdFromMetadata(session, index: int) -> str:
+        """
+        Derive a stable session id string from API metadata.
+        """
+        session_id = getattr(session, "session_id", None) or getattr(session, "id", None)
+        if session_id:
+            return str(session_id)
+        return f"session-{index + 1}"
+
+    @staticmethod
+    def _sessionTitleFromMetadata(session, index: int) -> str:
+        """
+        Resolve a human-readable title for a listed session.
+        """
+        title = (
+            getattr(session, "title", None)
+            or getattr(session, "name", None)
+            or getattr(session, "description", None)
+        )
+        if title:
+            return str(title)
+
+        session_id = getattr(session, "session_id", None) or getattr(session, "id", None)
+        if session_id:
+            return str(session_id)
+
+        return f"Session {index + 1}"
+
     def addSession(self, title: str, icon=None):
         """
         Add a session entry to the list.
@@ -432,7 +501,10 @@ class SessionListWidget(QWidget):
         if icon is None:
             icon = qtawesome.icon("mdi6.comment-multiple-outline")
 
-        self._list_widget.addItem(QListWidgetItem(icon, title))
+        self._session_ids.append(title)
+        item = QListWidgetItem(icon, title)
+        item.setData(Qt.ItemDataRole.UserRole, title)
+        self._list_widget.addItem(item)
         self._updateDeleteButton()
 
     def removeSession(self, index: int):
@@ -442,6 +514,8 @@ class SessionListWidget(QWidget):
         item = self._list_widget.takeItem(index)
         if item is not None:
             del item
+        if 0 <= index < len(self._session_ids):
+            self._session_ids.pop(index)
         self._updateDeleteButton()
 
     def count(self) -> int:
