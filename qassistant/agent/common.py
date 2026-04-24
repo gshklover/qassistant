@@ -1,7 +1,5 @@
 """
 Common definitions for the agent package.
-
-Defines the BaseSession interface used by concrete session implementations.
 """
 from abc import ABC, abstractmethod
 import dataclasses
@@ -179,56 +177,6 @@ class SessionEventHandler(ABC):
         Emitted when user sends a new message to the agent.
         """
         return
-
-
-class BaseSession(ABC):
-    """
-    Abstract base class describing the public agent interface.
-    Implementations must provide async lifecycle methods and a message API.
-    """
-    @property
-    def model(self) -> str:
-        """
-        Return the name of the underlying model used by the agent.
-        """
-        return ''
-
-    @property
-    def workspace_path(self) -> str:
-        """
-        Return agent workspace path
-        """
-        return ''
-
-    @abstractmethod
-    async def start(self):
-        """
-        Start the agent and allocate any resources required.
-        """
-
-    @abstractmethod
-    async def stop(self):
-        """
-        Stop the agent and release resources.
-        """
-
-    @abstractmethod
-    async def reset(self):
-        """
-        Reset the agent session to a clean state.
-        """
-
-    @abstractmethod
-    async def send(self, message: str) -> Any:
-        """
-        Send a message to the agent and return a response object.
-        """
-
-    @abstractmethod
-    async def submit(self, message: str) -> Any:
-        """
-        Submit a message to the agent and return immediately while streaming events continue asynchronously.
-        """
 
 
 @dataclasses.dataclass(slots=True)

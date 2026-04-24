@@ -17,9 +17,9 @@ import os
 import pathlib
 from PySide6.QtCore import QObject, Signal
 import traceback
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Sequence, Optional
 
-from .common import SessionEventHandler, BaseSession
+from .common import SessionEventHandler
 from .tools.pythonshell import PythonShell
 
 
@@ -275,6 +275,26 @@ _EVENT_METHOD_BY_TYPE = {
     ),
 }
 
+_EVENT_SIGNAL_BY_METHOD = {
+    "on_tool_execution_start": "toolExecutionStart",
+    "on_tool_execution_partial_result": "toolExecutionPartialResult",
+    "on_tool_execution_progress": "toolExecutionProgress",
+    "on_tool_execution_complete": "toolExecutionComplete",
+    "on_assistant_message": "assistantMessage",
+    "on_assistant_message_delta": "assistantMessageDelta",
+    "on_assistant_reasoning": "assistantReasoning",
+    "on_assistant_reasoning_delta": "assistantReasoningDelta",
+    "on_assistant_streaming_delta": "assistantStreamingDelta",
+    "on_assistant_turn_end": "assistantTurnEnd",
+    "on_assistant_turn_start": "assistantTurnStart",
+    "on_session_idle": "sessionIdle",
+    "on_session_task_complete": "sessionTaskComplete",
+    "on_session_error": "sessionError",
+    "on_session_usage": "sessionUsage",
+    "on_unknown_event": "unknownEvent",
+    "on_user_message": "userMessage",
+}
+
 
 def as_tool(func: Callable, **kwargs) -> Callable:
     """
@@ -298,25 +318,65 @@ def as_tool(func: Callable, **kwargs) -> Callable:
     return copilot.define_tool(**kwargs)(wrapper)
 
 
-class Session(BaseSession):
+class Session(QObject):
     """
     Wraps around a single session with start/stop/reset and tool integration.
     """
 
+    # SessionEventHandler-compatible signals exposed for Qt consumers.
+    # Signature: (tool_name: str | None, arguments: Any, tool_call_id: str | None, interaction_id: str | None)
+    toolExecutionStart = Signal(object, object, object, object)
+    # Signature: (tool_call_id: str | None, partial_output: str | None)
+    toolExecutionPartialResult = Signal(object, object)
+    # Signature: (tool_call_id: str | None, progress_message: str | None)
+    toolExecutionProgress = Signal(object, object)
+    # Signature: (tool_call_id: str | None, success: bool | None, result: Any, error: Any, interaction_id: str | None)
+    toolExecutionComplete = Signal(object, object, object, object, object)
+    # Signature: (delta_content: str | None, message_id: str | None, interaction_id: str | None)
+    assistantMessageDelta = Signal(object, object, object)
+    # Signature: (content: str | None, message_id: str | None, interaction_id: str | None, reasoning_text: str | None, tool_requests: list[Any] | None)
+    assistantMessage = Signal(object, object, object, object, object)
+    # Signature: (content: str | None, reasoning_id: str | None, interaction_id: str | None, reasoning_text: str | None)
+    assistantReasoning = Signal(object, object, object, object)
+    # Signature: (delta_content: str | None, reasoning_id: str | None, interaction_id: str | None)
+    assistantReasoningDelta = Signal(object, object, object)
+    # Signature: (total_response_size_bytes: float | None, interaction_id: str | None)
+    assistantStreamingDelta = Signal(object, object)
+    # Signature: (turn_id: str | None)
+    assistantTurnEnd = Signal(object)
+    # Signature: (turn_id: str | None, interaction_id: str | None)
+    assistantTurnStart = Signal(object, object)
+    # Signature: (background_tasks: Any)
+    sessionIdle = Signal(object)
+    # Signature: (summary: str | None)
+    sessionTaskComplete = Signal(object)
+    # Signature: (error_type: str | None, message: str | None, error: Any, status_code: int | None, url: str | None)
+    sessionError = Signal(object, object, object, object, object)
+    # Signature: (usage_percentage: float)
+    sessionUsage = Signal(float)
+    # Signature: (event_type: str, event: Any)
+    unknownEvent = Signal(str, object)
+    # Signature: (content: str | None, interaction_id: str | None, attachments: list[Any] | None)
+    userMessage = Signal(object, object, object)
+
     def __init__(
         self,
+        api: AgentAPI,
         model: str = DEFAULT_MODEL,
         tools: list[str | Callable] | None = None,
         event_handlers: list[SessionEventHandler] | None = None,
         workspace_path: str = "",
+        parent: QObject = None
     ):
         """
         Initialize the agent with the specified model, tools, and event handlers.
         """
+        super().__init__(parent)
+
         self._model = model
-        self._api = AgentAPI()
+        self._api = api
         self._shell = PythonShell()  # shared python shell instance for tool execution
-        self._session = None
+        self._session: Optional[copilot.CopilotSession] = None
         self._workspace_path = workspace_path or os.getcwd()
         self._tools = [
             # execution shell:
@@ -513,6 +573,10 @@ class Session(BaseSession):
         """
         event_info = _EVENT_METHOD_BY_TYPE.get(event.type, None)
         if event_info is None:
+            self._emitEventSignal("on_unknown_event", {
+                "event_type": event.type.value,
+                "event": event,
+            })
             for event_handler in self._event_handlers:
                 await event_handler.on_unknown_event(event.type.value, event)
             return
@@ -532,6 +596,8 @@ class Session(BaseSession):
             args = {"usage_percentage": usage_percentage}
             self._usage = usage_percentage
 
+        self._emitEventSignal(method_name, args)
+
         for event_handler in self._event_handlers:
             handler_method = getattr(event_handler, method_name, None)
             if handler_method is not None:
@@ -540,21 +606,24 @@ class Session(BaseSession):
                 except Exception:
                     traceback.print_exc()
 
+    def _emitEventSignal(self, method_name: str, args: dict[str, Any]):
+        """
+        Emit the Qt signal corresponding to the SessionEventHandler callback name.
+        """
+        signal_name = _EVENT_SIGNAL_BY_METHOD.get(method_name)
+        if not signal_name:
+            return
+
+        signal = getattr(self, signal_name, None)
+        if signal is None:
+            return
+
+        signal.emit(*args.values())
+
     def _on_event(self, event: copilot.session.SessionEvent):
         """
         Session callback that logs non-streaming events and dispatches to handlers.
         """
-        # if event.type.value not in (
-        #     "assistant.streaming_delta",
-        #     # "assistant.message_delta",
-        #     # "assistant.reasoning_delta",
-        # ):
-        #     data = {k: v for k, v in event.data.to_dict().items() if v is not None}
-        #     print(f"\n{event.type.value} ({event.id}, parent={event.parent_id}): {data}")
-
-        if not self._event_handlers:
-            return
-
         asyncio.create_task(self._handle_event(event))
 
 

@@ -113,16 +113,18 @@ class SessionWidget(QWidget):
 
     def __init__(
         self,
+        api: AgentAPI,
         settings: Settings,
         parent: Optional[QWidget] = None,
         workspace_path: str = "",
         session_id: str = "",
     ):
         super().__init__(parent=parent)
-
+        self._api = api
         self._settings = settings
         self._stream_handler = _SessionStreamHandler(self)
         self._agent = Session(
+            api=self._api,
             model=settings.model,
             event_handlers=[self._stream_handler],
             workspace_path=workspace_path,
@@ -944,6 +946,7 @@ class MainWindow(QMainWindow):
         tab_title = title or f"Session {n}"
         stored_path = self._settings.workspace_path
         chat_widget = SessionWidget(
+            api=self._api,
             settings=self._settings,
             parent=self._tabs,
             workspace_path=stored_path,

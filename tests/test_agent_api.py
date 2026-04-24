@@ -3,7 +3,9 @@ Unit tests for AgentAPI client startup behavior.
 """
 import asyncio
 import os
+from types import SimpleNamespace
 import unittest
+from copilot.generated.session_events import SessionEventType
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -13,6 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 from qassistant.agent.agent import AgentAPI
+from qassistant.agent.agent import Session
 
 
 class TestAgentAPI(unittest.IsolatedAsyncioTestCase):
@@ -143,6 +146,87 @@ class TestAgentAPI(unittest.IsolatedAsyncioTestCase):
 
             mock_client.start.assert_not_awaited()
             mock_client.list_sessions.assert_not_awaited()
+
+    async def test_session_emits_matching_qt_signal_for_mapped_event(self):
+        """
+        Ensure Session emits Qt signals with the same payload shape as SessionEventHandler callbacks.
+        """
+        session = Session(api=MagicMock())
+        payloads = []
+
+        session.assistantMessageDelta.connect(
+            lambda delta_content, message_id, interaction_id: payloads.append({
+                "delta_content": delta_content,
+                "message_id": message_id,
+                "interaction_id": interaction_id,
+            })
+        )
+
+        await session._handle_event(SimpleNamespace(
+            type=SessionEventType.ASSISTANT_MESSAGE_DELTA,
+            data=SimpleNamespace(
+                delta_content="chunk",
+                message_id="m-1",
+                interaction_id="i-1",
+            ),
+        ))
+
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0], {
+            "delta_content": "chunk",
+            "message_id": "m-1",
+            "interaction_id": "i-1",
+        })
+
+    async def test_session_emits_unknown_event_signal(self):
+        """
+        Ensure Session emits unknownEvent when an event type has no mapped handler hook.
+        """
+        session = Session(api=MagicMock())
+        payloads = []
+
+        session.unknownEvent.connect(lambda event_type, event: payloads.append((event_type, event)))
+
+        unknown_type = MagicMock()
+        unknown_type.value = "custom.event"
+        event = SimpleNamespace(type=unknown_type, data=SimpleNamespace())
+        await session._handle_event(event)
+
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0][0], "custom.event")
+        self.assertIs(payloads[0][1], event)
+
+    async def test_session_on_event_dispatches_signals_without_handlers(self):
+        """
+        Ensure _on_event still dispatches events when no SessionEventHandler instances are configured.
+        """
+        session = Session(api=MagicMock())
+        payloads = []
+
+        session.userMessage.connect(
+            lambda content, interaction_id, attachments: payloads.append({
+                "content": content,
+                "interaction_id": interaction_id,
+                "attachments": attachments,
+            })
+        )
+
+        session._on_event(SimpleNamespace(
+            type=SessionEventType.USER_MESSAGE,
+            data=SimpleNamespace(
+                content="hello",
+                interaction_id="i-2",
+                attachments=["a.txt"],
+            ),
+        ))
+        await asyncio.sleep(0)
+
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0], {
+            "content": "hello",
+            "interaction_id": "i-2",
+            "attachments": ["a.txt"],
+        })
 
 
 if __name__ == "__main__":
