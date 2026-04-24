@@ -1,7 +1,7 @@
 """
 Common definitions for the agent package.
 
-Defines the BaseAgent interface used by concrete Agent implementations.
+Defines the BaseSession interface used by concrete session implementations.
 """
 from abc import ABC, abstractmethod
 import dataclasses
@@ -10,7 +10,31 @@ import pandas
 from typing import Any
 
 
-class AgentEventHandler(ABC):
+class AgentEventHandler:
+    """
+    Lifecycle handler interface for AgentAPI session list events.
+    """
+
+    async def on_session_created(self, session_id: str):
+        """
+        Called when a session is created.
+        """
+        return
+
+    async def on_session_deleted(self, session_id: str):
+        """
+        Called when a session is deleted.
+        """
+        return
+
+    async def on_session_updated(self, session_id: str):
+        """
+        Called when a session is updated.
+        """
+        return
+
+
+class SessionEventHandler(ABC):
     """
     Abstract base class for handling agent events such as tool calls, permission requests, and errors.
     """
@@ -180,7 +204,7 @@ class AgentEventHandler(ABC):
         return
 
 
-class BaseAgent(ABC):
+class BaseSession(ABC):
     """
     Abstract base class describing the public agent interface.
     Implementations must provide async lifecycle methods and a message API.
@@ -228,6 +252,10 @@ class BaseAgent(ABC):
         """
         Submit a message to the agent and return immediately while streaming events continue asynchronously.
         """
+
+
+# Backward-compatible alias.
+BaseAgent = BaseSession
 
 
 @dataclasses.dataclass(slots=True)

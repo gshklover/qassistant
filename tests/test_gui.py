@@ -380,7 +380,7 @@ class TestSessionListWidget(unittest.TestCase):
 
     def test_session_list_widget_loads_sessions_from_api(self):
         """
-        loadSessions() populates the list from list_sessions() metadata.
+        loadSessions() populates the list from AgentAPI.list_sessions() metadata.
         """
         widget = SessionListWidget()
         try:
@@ -389,7 +389,7 @@ class TestSessionListWidget(unittest.TestCase):
                 SimpleNamespace(id="def456"),
             ]
 
-            with patch("qassistant.gui.application.list_sessions", new=AsyncMock(return_value=mocked_sessions)):
+            with patch("qassistant.gui.application.AgentAPI.list_sessions", new=AsyncMock(return_value=mocked_sessions)):
                 asyncio.run(widget.loadSessions())
 
             self.assertEqual(widget.count(), 2)

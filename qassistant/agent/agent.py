@@ -16,9 +16,9 @@ from openai import AsyncOpenAI
 import os
 import pathlib
 import traceback
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
-from .common import AgentEventHandler, BaseAgent
+from .common import AgentEventHandler, SessionEventHandler, BaseSession
 from .tools.pythonshell import PythonShell
 
 
@@ -27,10 +27,105 @@ DEFAULT_MODEL = "gpt-5-mini"
 DEFAULT_EMBEDDING_MODEL = "openai/text-embedding-3-small"
 DEFAULT_TIMEOUT = 300.0  # per-turn timeout in seconds
 
-_MODEL_LIST_CACHE: list[str] | None = None
-_MODEL_LIST_LOCK = asyncio.Lock()
-_SHARED_CLIENT: copilot.CopilotClient | None = None
-_SHARED_CLIENT_LOCK = asyncio.Lock()
+
+class AgentAPI:
+    """
+    Thin wrapper around a shared CopilotClient instance.
+    """
+
+    def __init__(self, event_handlers: list[AgentEventHandler] | None = None):
+        """
+        Initialize the client
+        """
+        self._models = None
+        self._event_handlers = list(event_handlers or ())
+        self._client = copilot.CopilotClient(auto_start=True)
+        self._client.on("session.created", lambda event: self._dispatch_event("on_session_created", event))
+        self._client.on("session.deleted", lambda event: self._dispatch_event("on_session_deleted", event))
+        self._client.on("session.updated", lambda event: self._dispatch_event("on_session_updated", event))
+
+    async def list_models(self) -> list[copilot.client.ModelInfo]:
+        """
+        List available models from the Copilot API.
+        Returns list of copilot.client.ModelInfo objects with 'id', 'name', 'summary', and 'capabilities' fields.
+        """
+        if self._models is None:
+            self._models = await self._client.list_models()
+        return self._models
+
+    async def list_sessions(self) -> list[copilot.client.SessionMetadata]:
+        """
+        List existing sessions from the Copilot API.
+        """
+        return await self._client.list_sessions()
+
+    async def create_session(
+        self,
+        *,
+        working_directory: str = "",
+        on_permission_request: Any = None,
+        model: str = DEFAULT_MODEL,
+        tools: list[Any] | None = None,
+        streaming: bool = True,
+        custom_agents: list[Any] | None = None,
+        agent: str | None = None,
+    ):
+        """
+        Create a Copilot session.
+        """
+        return await self._client.create_session(
+            working_directory=working_directory,
+            on_permission_request=on_permission_request,
+            model=model,
+            tools=tools,
+            streaming=streaming,
+            custom_agents=custom_agents,
+            agent=agent,
+        )
+
+    async def resume_session(
+        self,
+        *,
+        session_id: str,
+        working_directory: str = "",
+        on_permission_request: Any = None,
+        model: str = DEFAULT_MODEL,
+        tools: list[Any] | None = None,
+        streaming: bool = True,
+        custom_agents: list[Any] | None = None,
+        agent: str | None = None,
+    ):
+        """
+        Resume a Copilot session.
+        """
+        return await self._client.resume_session(
+            session_id=session_id,
+            working_directory=working_directory,
+            on_permission_request=on_permission_request,
+            model=model,
+            tools=tools,
+            streaming=streaming,
+            custom_agents=custom_agents,
+            agent=agent,
+        )
+
+    def _dispatch_event(self, method_name: str, event):
+        """
+        Dispatch lifecycle notifications to registered AgentAPI event handlers.
+        """
+        session_id = getattr(event, "sessionId", "")
+        for event_handler in self._event_handlers:
+            handler_method = getattr(event_handler, method_name, None)
+            if handler_method is None:
+                continue
+
+            async def call_handler(method=handler_method, sid=session_id):
+                try:
+                    await method(sid)
+                except Exception:
+                    traceback.print_exc()
+
+            asyncio.create_task(call_handler())
 
 
 class CustomAgentConfig(copilot.session.CustomAgentConfig):
@@ -38,57 +133,6 @@ class CustomAgentConfig(copilot.session.CustomAgentConfig):
     Extends custom agent definition with icon settings
     """
     icon: str
-
-
-async def _get_client() -> copilot.CopilotClient:
-    """
-    Return a shared Copilot client that is started and ready.
-    """
-    global _SHARED_CLIENT
-
-    if _SHARED_CLIENT is not None and _SHARED_CLIENT.get_state() in ("connected", "connecting"):
-        return _SHARED_CLIENT
-
-    async with _SHARED_CLIENT_LOCK:
-        if _SHARED_CLIENT is None:
-            _SHARED_CLIENT = copilot.CopilotClient()
-
-        if _SHARED_CLIENT.get_state() not in ("connected", "connecting"):
-            await _SHARED_CLIENT.start()
-
-        return _SHARED_CLIENT
-
-
-async def list_session_models() -> list[str]:
-    """
-    List available model ids from the Copilot API that can be used for agent sessions.
-    """
-    global _MODEL_LIST_CACHE
-
-    if _MODEL_LIST_CACHE is not None:
-        return list(_MODEL_LIST_CACHE)
-
-    async with _MODEL_LIST_LOCK:
-        if _MODEL_LIST_CACHE is not None:
-            return list(_MODEL_LIST_CACHE)
-
-        client = await _get_client()
-        models = await client.list_models()
-
-        _MODEL_LIST_CACHE = [model.id for model in models]
-        return list(_MODEL_LIST_CACHE)
-
-
-async def list_sessions() -> list[copilot.client.SessionMetadata]:
-    """
-    List existing Copilot sessions from the client API.
-    """
-    client = await _get_client()
-    return await client.list_sessions()
-
-
-
-
 
 
 # map event type to handler name & argument mapping
@@ -228,7 +272,7 @@ def as_tool(func: Callable, **kwargs) -> Callable:
     return copilot.define_tool(**kwargs)(wrapper)
 
 
-class Agent(BaseAgent):
+class Session(BaseSession):
     """
     Base agent class implementation using copilot SDK.
     Wraps around a single session with start/stop/reset and tool integration.
@@ -238,13 +282,14 @@ class Agent(BaseAgent):
         self,
         model: str = DEFAULT_MODEL,
         tools: list[str | Callable] | None = None,
-        event_handlers: list[AgentEventHandler] | None = None,
+        event_handlers: list[SessionEventHandler] | None = None,
         workspace_path: str = "",
     ):
         """
         Initialize the agent with the specified model, tools, and event handlers.
         """
         self._model = model
+        self._api = AgentAPI()
         self._shell = PythonShell()  # shared python shell instance for tool execution
         self._session = None
         self._workspace_path = workspace_path or os.getcwd()
@@ -308,11 +353,34 @@ class Agent(BaseAgent):
         if self._session is not None:
             raise RuntimeError("Agent is already running")
 
-        client = await _get_client()
+        on_permission_request = self._config.get("on_permission_request")
+        model = self._config.get("model", DEFAULT_MODEL)
+        tools = self._config.get("tools")
+        streaming = self._config.get("streaming", True)
+        custom_agents = self._config.get("custom_agents")
+        agent = self._config.get("agent")
+
         if session_id is not None:
-            self._session = await client.resume_session(working_directory=self._workspace_path, session_id=session_id, **self._config)
+            self._session = await self._api.resume_session(
+                session_id=session_id,
+                working_directory=self._workspace_path,
+                on_permission_request=on_permission_request,
+                model=model,
+                tools=tools,
+                streaming=streaming,
+                custom_agents=custom_agents,
+                agent=agent,
+            )
         else:
-            self._session = await client.create_session(working_directory=self._workspace_path, **self._config)
+            self._session = await self._api.create_session(
+                working_directory=self._workspace_path,
+                on_permission_request=on_permission_request,
+                model=model,
+                tools=tools,
+                streaming=streaming,
+                custom_agents=custom_agents,
+                agent=agent,
+            )
 
         if self._config.get('agent', None):
             await self._session.rpc.agent.select(SessionAgentSelectParams(name=self._config.get('agent')))
@@ -334,8 +402,14 @@ class Agent(BaseAgent):
         if self._session:
             await self._session.disconnect()
 
-        client = await _get_client()
-        self._session = await client.create_session(**self._config)
+        self._session = await self._api.create_session(
+            on_permission_request=self._config.get("on_permission_request"),
+            model=self._config.get("model", DEFAULT_MODEL),
+            tools=self._config.get("tools"),
+            streaming=self._config.get("streaming", True),
+            custom_agents=self._config.get("custom_agents"),
+            agent=self._config.get("agent"),
+        )
         self._session.on(self._on_event)
 
     async def send(self, message: str) -> copilot.session.SessionEvent:

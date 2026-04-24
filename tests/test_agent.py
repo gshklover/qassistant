@@ -10,10 +10,10 @@ import unittest
 from uuid import uuid4
 
 
-from qassistant.agent import Agent, AgentEventHandler, list_session_models
+from qassistant.agent import Agent, SessionEventHandler, list_session_models
 
 
-class _RecordingEventsHandler(AgentEventHandler):
+class _RecordingEventsHandler(SessionEventHandler):
     """
     Collects event payloads for validation.
     """
@@ -382,7 +382,7 @@ class TestAgent(unittest.IsolatedAsyncioTestCase):
         """
         done_event = asyncio.Event()
 
-        class StreamingEventHandler(AgentEventHandler):
+        class StreamingEventHandler(SessionEventHandler):
             def __init__(self):
                 self.streaming_response = ""
 

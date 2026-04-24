@@ -33,8 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from .._version import __version__
-from ..agent import Agent, AgentEventHandler, Message, Role, TextContent, list_session_models, load_agents
-from ..agent.agent import CustomAgentConfig, list_sessions
+from ..agent import AgentAPI, CustomAgentConfig, SessionEventHandler, Message, Role, Session, TextContent, load_agents
 from ..agent.common import MessageState, ToolCallContent
 from .settings import Settings, SettingsDlg
 from .widgets import ChatWidget, UsagePieWidget
@@ -56,7 +55,7 @@ def wait_cursor():
         QApplication.restoreOverrideCursor()
 
 
-class _SessionStreamHandler(AgentEventHandler):
+class _SessionStreamHandler(SessionEventHandler):
     """
     Bridge agent streaming events to the owning SessionWidget.
     """
@@ -122,7 +121,7 @@ class SessionWidget(QWidget):
 
         self._settings = settings
         self._stream_handler = _SessionStreamHandler(self)
-        self._agent = Agent(
+        self._agent = Session(
             model=settings.model,
             event_handlers=[self._stream_handler],
             workspace_path=workspace_path,
@@ -400,6 +399,7 @@ class SessionListWidget(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent=parent)
         self.setObjectName("sessionListWidget")
+        self._api = AgentAPI()
         self._session_ids: list[str] = []
 
         self._new_button = QPushButton("New Session", self)
@@ -445,7 +445,7 @@ class SessionListWidget(QWidget):
         Load existing sessions from the Copilot client and display them.
         """
         try:
-            sessions = await list_sessions()
+            sessions = await self._api.list_sessions()
         except Exception:
             traceback.print_exc()
             return
@@ -584,6 +584,7 @@ class MainWindow(QMainWindow):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.setWindowTitle("qassistant")
+        self._api = AgentAPI()
         self._settings = Settings()
         self._session_list_widget = SessionListWidget(self)
         self._session_list_widget.openSessionRequested.connect(self._onSessionOpenRequested)
@@ -750,7 +751,7 @@ class MainWindow(QMainWindow):
         """
         try:
             with wait_cursor():
-                models = await list_session_models()
+                models = [model.id for model in await self._api.list_models()]
             if not models:
                 models = [self._settings.model]
         except Exception:
