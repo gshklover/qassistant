@@ -38,17 +38,31 @@ class AgentAPI:
         Initialize the client
         """
         self._models = None
+        self._client_start_lock = asyncio.Lock()
         self._event_handlers = list(event_handlers or ())
         self._client = copilot.CopilotClient(auto_start=True)
         self._client.on("session.created", lambda event: self._dispatch_event("on_session_created", event))
         self._client.on("session.deleted", lambda event: self._dispatch_event("on_session_deleted", event))
         self._client.on("session.updated", lambda event: self._dispatch_event("on_session_updated", event))
 
+    async def _ensure_client_started(self):
+        """
+        Ensure the shared Copilot client is started before using read-only API calls.
+        """
+        if self._client.get_state() == "connected":
+            return
+
+        async with self._client_start_lock:
+            if self._client.get_state() == "connected":
+                return
+            await self._client.start()
+
     async def list_models(self) -> list[copilot.client.ModelInfo]:
         """
         List available models from the Copilot API.
         Returns list of copilot.client.ModelInfo objects with 'id', 'name', 'summary', and 'capabilities' fields.
         """
+        await self._ensure_client_started()
         if self._models is None:
             self._models = await self._client.list_models()
         return self._models
@@ -57,6 +71,7 @@ class AgentAPI:
         """
         List existing sessions from the Copilot API.
         """
+        await self._ensure_client_started()
         return await self._client.list_sessions()
 
     async def create_session(
