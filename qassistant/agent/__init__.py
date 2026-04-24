@@ -12,7 +12,6 @@ from .agent import (
     Session,
 )
 from .common import (
-    BaseAgent,
     BaseSession,
     Content,
     Message,
@@ -23,7 +22,7 @@ from .common import (
 
 __all__ = (
     "AgentAPI", "Content", "CustomAgentConfig",
-    "SessionEventHandler", "BaseSession", "BaseAgent",
+    "SessionEventHandler", "BaseSession",
     "Message", "Role", "Session", "TextContent", "DEFAULT_MODEL",
     "DEFAULT_EMBEDDING_MODEL", "load_agents"
 )

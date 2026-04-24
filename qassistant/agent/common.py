@@ -231,10 +231,6 @@ class BaseSession(ABC):
         """
 
 
-# Backward-compatible alias.
-BaseAgent = BaseSession
-
-
 @dataclasses.dataclass(slots=True)
 class Content:
     """
