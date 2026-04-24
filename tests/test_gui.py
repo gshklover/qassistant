@@ -338,6 +338,26 @@ class TestMainWindow(unittest.TestCase):
         finally:
             window.close()
 
+    def test_toolbar_sessions_toggle_hides_and_shows_dock(self):
+        """
+        The first toolbar action toggles the sessions dock hidden state.
+        """
+        window = MainWindow()
+        try:
+            first_action = window._tool_bar.actions()[0]
+            self.assertIs(first_action, window._toggle_session_list_action)
+            self.assertFalse(window._session_dock.isHidden())
+
+            window._toggle_session_list_action.trigger()
+            self.application.processEvents()
+            self.assertTrue(window._session_dock.isHidden())
+
+            window._toggle_session_list_action.trigger()
+            self.application.processEvents()
+            self.assertFalse(window._session_dock.isHidden())
+        finally:
+            window.close()
+
 
 class TestSessionListWidget(unittest.TestCase):
     """

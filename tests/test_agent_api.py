@@ -1,6 +1,7 @@
 """
 Unit tests for AgentAPI client startup behavior.
 """
+import asyncio
 import unittest
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
@@ -81,6 +82,58 @@ class TestAgentAPI(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(call_order, ["start", "list_sessions", "list_sessions"])
             mock_client.start.assert_awaited_once()
             self.assertEqual(mock_client.list_sessions.await_count, 2)
+
+    async def test_list_models_waits_for_connecting_state(self):
+        """
+        Ensure list_models() waits for an in-flight connect and avoids a duplicate start.
+        """
+        with patch("qassistant.agent.agent.CLIENT_CONNECTING_TIMEOUT", 0.05), \
+                patch("qassistant.agent.agent.CLIENT_CONNECTING_POLL_INTERVAL", 0.001), \
+                patch("qassistant.agent.agent.copilot.CopilotClient") as mock_client_cls:
+            state = {"value": "connecting"}
+
+            mock_client = MagicMock()
+            mock_client.on = MagicMock()
+            mock_client.get_state = MagicMock(side_effect=lambda: state["value"])
+            mock_client.start = AsyncMock()
+            mock_client.list_models = AsyncMock(return_value=[{"id": "m1"}])
+            mock_client_cls.return_value = mock_client
+
+            async def transition_to_connected():
+                await asyncio.sleep(0.01)
+                state["value"] = "connected"
+
+            transition_task = asyncio.create_task(transition_to_connected())
+            try:
+                api = AgentAPI()
+                result = await api.list_models()
+            finally:
+                await transition_task
+
+            self.assertEqual(result, [{"id": "m1"}])
+            mock_client.start.assert_not_awaited()
+            mock_client.list_models.assert_awaited_once()
+
+    async def test_list_sessions_connecting_timeout_raises(self):
+        """
+        Ensure list_sessions() raises TimeoutError if client remains connecting beyond threshold.
+        """
+        with patch("qassistant.agent.agent.CLIENT_CONNECTING_TIMEOUT", 0.01), \
+                patch("qassistant.agent.agent.CLIENT_CONNECTING_POLL_INTERVAL", 0.001), \
+                patch("qassistant.agent.agent.copilot.CopilotClient") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.on = MagicMock()
+            mock_client.get_state = MagicMock(return_value="connecting")
+            mock_client.start = AsyncMock()
+            mock_client.list_sessions = AsyncMock(return_value=[{"id": "s1"}])
+            mock_client_cls.return_value = mock_client
+
+            api = AgentAPI()
+            with self.assertRaises(TimeoutError):
+                await api.list_sessions()
+
+            mock_client.start.assert_not_awaited()
+            mock_client.list_sessions.assert_not_awaited()
 
 
 if __name__ == "__main__":

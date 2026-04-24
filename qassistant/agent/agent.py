@@ -26,6 +26,8 @@ from .tools.pythonshell import PythonShell
 DEFAULT_MODEL = "gpt-5-mini"
 DEFAULT_EMBEDDING_MODEL = "openai/text-embedding-3-small"
 DEFAULT_TIMEOUT = 300.0  # per-turn timeout in seconds
+CLIENT_CONNECTING_TIMEOUT = 5.0  # seconds to wait while client is already connecting
+CLIENT_CONNECTING_POLL_INTERVAL = 0.05  # seconds between state checks
 
 
 class AgentAPI:
@@ -53,8 +55,18 @@ class AgentAPI:
             return
 
         async with self._client_start_lock:
-            if self._client.get_state() == "connected":
+            state = self._client.get_state()
+
+            if state == "connecting":
+                for _ in range(int(CLIENT_CONNECTING_TIMEOUT / CLIENT_CONNECTING_POLL_INTERVAL)):
+                    await asyncio.sleep(CLIENT_CONNECTING_POLL_INTERVAL)
+                    state = self._client.get_state()
+                    if state != "connecting":
+                        break
+
+            if state == "connected":
                 return
+
             await self._client.start()
 
     async def list_models(self) -> list[copilot.client.ModelInfo]:

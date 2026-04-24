@@ -605,6 +605,18 @@ class MainWindow(QMainWindow):
         self._tool_bar.setIconSize(QSize(32, 32))
         self.addToolBar(self._tool_bar)
 
+        self._toggle_session_list_action = QAction(
+            qtawesome.icon("mdi6.dock-left", color="#404040"),
+            "Sessions",
+            self,
+            checkable=True,
+            checked=True,
+            toolTip="Show or hide the sessions side panel",
+        )
+        self._toggle_session_list_action.toggled.connect(self._onSessionDockToggleRequested)
+        self._tool_bar.addAction(self._toggle_session_list_action)
+        self._session_dock.visibilityChanged.connect(self._onSessionDockVisibilityChanged)
+
         spacer = QWidget(self._tool_bar)
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._tool_bar.addWidget(spacer)
@@ -683,6 +695,22 @@ class MainWindow(QMainWindow):
 
         self._setWorkspaceStatusText("Workspace: <unknown>")
         self._loadAgents()
+
+    def _onSessionDockToggleRequested(self, checked: bool) -> None:
+        """
+        Toggle session side panel hidden state from the toolbar button.
+        """
+        self._session_dock.setHidden(not checked)
+
+    def _onSessionDockVisibilityChanged(self, _: bool) -> None:
+        """
+        Keep the toolbar toggle checked state synchronized with dock hidden state.
+        """
+        checked = not self._session_dock.isHidden()
+        if self._toggle_session_list_action.isChecked() != checked:
+            self._toggle_session_list_action.blockSignals(True)
+            self._toggle_session_list_action.setChecked(checked)
+            self._toggle_session_list_action.blockSignals(False)
 
     def _onResetSession(self) -> None:
         """
