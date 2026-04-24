@@ -300,7 +300,6 @@ def as_tool(func: Callable, **kwargs) -> Callable:
 
 class Session(BaseSession):
     """
-    Base agent class implementation using copilot SDK.
     Wraps around a single session with start/stop/reset and tool integration.
     """
 

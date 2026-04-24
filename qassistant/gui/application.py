@@ -469,6 +469,10 @@ class SessionListWidget(QWidget):
         for session in sessions:
             session_id = session.sessionId
             summary = session.summary or ""
+
+            if '\n' in summary:
+                summary = summary.split('\n', 1)[0] + "..."  # use only the first line of the summary for display
+
             self._sessions[session_id] = session
             item = QListWidgetItem(icon, str(summary))
             item.setData(Qt.ItemDataRole.UserRole, session_id)
