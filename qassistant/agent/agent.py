@@ -86,6 +86,13 @@ class AgentAPI:
         await self._ensure_client_started()
         return await self._client.list_sessions()
 
+    async def delete_session(self, session_id: str):
+        """
+        Delete an existing session by id.
+        """
+        await self._ensure_client_started()
+        return await self._client.delete_session(session_id=session_id)
+
     async def create_session(
         self,
         *,

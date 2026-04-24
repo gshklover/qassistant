@@ -116,6 +116,7 @@ class SessionWidget(QWidget):
         settings: Settings,
         parent: Optional[QWidget] = None,
         workspace_path: str = "",
+        session_id: str = "",
     ):
         super().__init__(parent=parent)
 
@@ -132,6 +133,7 @@ class SessionWidget(QWidget):
             stopRequested=self._onStopRequested,
         )
         self._response_message: Message | None = None
+        self._session_id = session_id
         self._tool_call_content_map: dict[str, ToolCallContent] = {}
         self._has_delta_content = False
         self._aborted = False
@@ -155,6 +157,13 @@ class SessionWidget(QWidget):
         Return the current context window usage percentage for this session.
         """
         return self._agent.usage
+
+    @property
+    def sessionId(self) -> str:
+        """
+        Return bound session id for resumed sessions, if any.
+        """
+        return self._session_id
 
     def setAgents(self, agents: list[CustomAgentConfig], agent: str):
         """
@@ -195,7 +204,7 @@ class SessionWidget(QWidget):
         Submit user message to the agent and rely on event callbacks for streamed updates.
         """
         if not self._agent.running:
-            await self._agent.start()
+            await self._agent.start(session_id=self._session_id or None)
         try:
             await self._agent.submit(message=message)  # may throw if session was killed
         except Exception as exc:
@@ -392,30 +401,28 @@ class SessionListWidget(QWidget):
     Side-panel widget used to manage and select session tabs.
     """
 
-    openSessionRequested = Signal(int)
-    deleteSessionRequested = Signal(int)
-    newSessionRequested = Signal()
+    openSessionRequested = Signal(str)
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, api: AgentAPI, parent: Optional[QWidget] = None):
         super().__init__(parent=parent)
         self.setObjectName("sessionListWidget")
-        self._api = AgentAPI()
-        self._session_ids: list[str] = []
+        self._api = api
+        self._sessions = {}
 
-        self._new_button = QPushButton("New Session", self)
-        self._new_button.setIcon(qtawesome.icon("mdi6.plus", color="darkgreen"))
-        self._new_button.clicked.connect(self._onNewSessionClicked)
-        self._delete_button = QPushButton("Delete Session", self)
-        self._delete_button.setIcon(qtawesome.icon("mdi6.delete-outline", color="darkred"))
+        self._delete_button = QPushButton(
+            qtawesome.icon("mdi6.delete-outline", color="darkred"), "", self
+        )
         self._delete_button.clicked.connect(self._onDeleteSessionClicked)
+        self._delete_button.setToolTip("Delete the selected session")
         self._list_widget = QListWidget(parent=self)
         self._list_widget.setObjectName("sessionListItems")
         self._list_widget.setAlternatingRowColors(True)
         self._list_widget.currentRowChanged.connect(self._onCurrentRowChanged)
+        self._list_widget.itemDoubleClicked.connect(self._onItemDoubleClicked)
 
         button_layout = QHBoxLayout()
         button_layout.setContentsMargins(0, 0, 0, 0)
-        button_layout.addWidget(self._new_button)
+        button_layout.addStretch()
         button_layout.addWidget(self._delete_button)
 
         layout = QVBoxLayout(self)
@@ -444,6 +451,7 @@ class SessionListWidget(QWidget):
         """
         Load existing sessions from the Copilot client and display them.
         """
+        self._sessions = {}
         try:
             sessions = await self._api.list_sessions()
         except Exception:
@@ -452,13 +460,15 @@ class SessionListWidget(QWidget):
 
         self._list_widget.blockSignals(True)
         self._list_widget.clear()
-        self._session_ids.clear()
+
+        icon = qtawesome.icon("mdi6.comment-multiple-outline")
 
         for index, session in enumerate(sessions):
-            session_id = self._sessionIdFromMetadata(session, index)
-            title = self._sessionTitleFromMetadata(session, index)
-            self._session_ids.append(session_id)
-            item = QListWidgetItem(qtawesome.icon("mdi6.comment-multiple-outline"), title)
+            session_id = session.sessionId
+            summary = session.summary or ''
+            self._sessions[session_id] = session
+
+            item = QListWidgetItem(icon, summary)
             item.setData(Qt.ItemDataRole.UserRole, session_id)
             self._list_widget.addItem(item)
 
@@ -494,18 +504,22 @@ class SessionListWidget(QWidget):
 
         return f"Session {index + 1}"
 
-    def addSession(self, title: str, icon=None):
+    def indexForSessionId(self, session_id: str) -> int:
         """
-        Add a session entry to the list.
+        Return the current row index for the given session id, or -1 if not found.
         """
-        if icon is None:
-            icon = qtawesome.icon("mdi6.comment-multiple-outline")
+        try:
+            return self._session_ids.index(session_id)
+        except ValueError:
+            return -1
 
-        self._session_ids.append(title)
-        item = QListWidgetItem(icon, title)
-        item.setData(Qt.ItemDataRole.UserRole, title)
-        self._list_widget.addItem(item)
-        self._updateDeleteButton()
+    def removeSessionById(self, session_id: str):
+        """
+        Remove a session entry by id.
+        """
+        index = self.indexForSessionId(session_id)
+        if index >= 0:
+            self.removeSession(index)
 
     def removeSession(self, index: int):
         """
@@ -547,25 +561,45 @@ class SessionListWidget(QWidget):
 
     def _onCurrentRowChanged(self, index: int):
         """
-        Forward list selection changes as session-open requests.
+        Refresh state when selection changes.
         """
         self._updateDeleteButton()
+
+    def _onItemDoubleClicked(self, item: QListWidgetItem) -> None:
+        """
+        Open the specific session item that was double-clicked.
+        """
+        index = self._list_widget.row(item)
         if index >= 0:
-            self.openSessionRequested.emit(index)
+            session_id = item.data(Qt.ItemDataRole.UserRole) or self._session_ids[index]
+            self.openSessionRequested.emit(str(session_id))
 
     def _onDeleteSessionClicked(self):
         """
         Emit a delete request for the selected session.
         """
         index = self._list_widget.currentRow()
-        if index >= 0:
-            self.deleteSessionRequested.emit(index)
+        if index < 0:
+            return
 
-    def _onNewSessionClicked(self):
+        item = self._list_widget.item(index)
+        if item is None:
+            return
+
+        session_id = item.data(Qt.ItemDataRole.UserRole)
+        if session_id in self._sessions:
+            self._sessions.pop(session_id)
+            self._list_widget.takeItem(index)
+            asyncio.create_task(self._asyncDeleteSession(session_id))
+
+    async def _asyncDeleteSession(self, session_id: str):
         """
-        Emit a request to create a new session.
+        Delete specified session asynchronously
         """
-        self.newSessionRequested.emit()
+        try:
+            await self._api.delete_session(session_id)
+        except:
+            traceback.print_exc()
 
     def _updateDeleteButton(self):
         """
@@ -581,15 +615,14 @@ class MainWindow(QMainWindow):
     Main window for qassistant GUI. This is a placeholder for the actual UI.
     """
 
-    def __init__(self, **kwargs):
+    def __init__(self, api: AgentAPI, **kwargs):
         super().__init__(**kwargs)
         self.setWindowTitle("qassistant")
-        self._api = AgentAPI()
+        self._api = api
         self._settings = Settings()
-        self._session_list_widget = SessionListWidget(self)
+        self._tab_session_ids: list[str] = []
+        self._session_list_widget = SessionListWidget(api=self._api, parent=self)
         self._session_list_widget.openSessionRequested.connect(self._onSessionOpenRequested)
-        self._session_list_widget.deleteSessionRequested.connect(self._onTabCloseRequested)
-        self._session_list_widget.newSessionRequested.connect(self.addSessionTab)
         self._session_dock = QDockWidget("Sessions", self)
         self._session_dock.setObjectName("sessionDockWidget")
         self._session_dock.setFeatures(QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
@@ -810,37 +843,42 @@ class MainWindow(QMainWindow):
         """
         Close the tab at the given index. The last tab cannot be closed.
         """
-        if self._tabs.count() > 1:
-            widget = self._tabs.widget(index)
-            self._tabs.removeTab(index)
-            self._session_list_widget.removeSession(index)
-            if widget is not None:
-                widget.deleteLater()
-            self._syncSessionListSelection()
-            self._updateStatusBar()
+        if self._tabs.count() <= 1:
+            return
+
+        self._removeTab(index)
+
+    def _removeTab(self, index: int):
+        """
+        Remove a tab at the specified index and keep session id mapping aligned.
+        """
+        widget = self._tabs.widget(index)
+        self._tabs.removeTab(index)
+        if 0 <= index < len(self._tab_session_ids):
+            self._tab_session_ids.pop(index)
+        if widget is not None:
+            widget.deleteLater()
+        self._updateStatusBar()
 
     def _onCurrentTabChanged(self, _: int) -> None:
         """
         Refresh status bar when active tab changes.
         """
-        self._syncSessionListSelection()
         self._updateStatusBar()
 
-    def _onSessionOpenRequested(self, index: int) -> None:
+    def _onSessionOpenRequested(self, session_id: str) -> None:
         """
-        Switch the active tab when the user selects a session in the side panel.
+        Open or focus a tab bound to the selected session id.
         """
-        if index < 0 or index >= self._tabs.count() or index == self._tabs.currentIndex():
+        try:
+            index = self._tab_session_ids.index(session_id)
+        except ValueError:
+            title = self._session_list_widget.sessionTitle(session_id)
+            self.addSessionTab(session_id=session_id, title=title)
             return
 
-        self._tabs.setCurrentIndex(index)
-
-    def _syncSessionListSelection(self) -> None:
-        """
-        Keep the session side panel selection synchronized with the active tab.
-        """
-        current_index = self._tabs.currentIndex()
-        self._session_list_widget.setCurrentSession(current_index)
+        if index != self._tabs.currentIndex():
+            self._tabs.setCurrentIndex(index)
 
     def _onSessionWorkAreaChanged(self, path: str) -> None:
         """
@@ -895,24 +933,29 @@ class MainWindow(QMainWindow):
         self._workspace_status_label.setText(text)
         self._workspace_status_label.setToolTip(text)
 
-    def addSessionTab(self) -> ChatWidget:
+    def addSessionTab(self, session_id: str = "", title: str = "") -> ChatWidget:
         """
         Add a new session tab to the main window.
         """
         n = self._tabs.count() + 1
+        tab_title = title or f"Session {n}"
         stored_path = self._settings.workspace_path
         chat_widget = SessionWidget(
-            settings=self._settings, parent=self._tabs, workspace_path=stored_path
+            settings=self._settings,
+            parent=self._tabs,
+            workspace_path=stored_path,
+            session_id=session_id,
         )
         chat_widget.workspaceChanged.connect(self._onSessionWorkAreaChanged)
         chat_widget.usageChanged.connect(self._onSessionUsageChanged)
         self._tabs.addTab(
-            chat_widget, qtawesome.icon("mdi6.comment-multiple-outline"), f"Session {n}"
+            chat_widget,
+            qtawesome.icon("mdi6.comment-multiple-outline"),
+            tab_title,
         )
-        self._session_list_widget.addSession(f"Session {n}")
+        self._tab_session_ids.append(session_id)
         self._tabs.setCurrentWidget(chat_widget)
 
-        self._syncSessionListSelection()
         self._updateStatusBar()
         return chat_widget
 
@@ -937,7 +980,8 @@ class Application(QApplication):
         self.setApplicationVersion(__version__)
         self.setWindowIcon(qtawesome.icon("mdi6.comment-multiple-outline", size=64))
 
-        self.main_window = MainWindow()
+        self._api = AgentAPI()
+        self.main_window = MainWindow(api=self._api)
         self.main_window.resize(QSize(800, 600))
         self.main_window.addSessionTab()
         self.main_window.show()
