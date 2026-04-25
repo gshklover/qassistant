@@ -384,14 +384,6 @@ class Session(QObject):
         """
         return self._model
 
-    @model.setter
-    def model(self, new_model: str):
-        """
-        Update the model name in the agent configuration. Note that this will not affect an already running session.
-        """
-        self._model = new_model
-        self._config['model'] = new_model
-
     @property
     def running(self) -> bool:
         """
@@ -477,8 +469,8 @@ class Session(QObject):
         Set the available custom agents and optionally select one by name.
         Updates the session configuration and restarts the session.
         """
-        self._config['custom_agents'] = agents or None
-        self._config['agent'] = agent or None
+        self._session_config['custom_agents'] = agents or None
+        self._session_config['agent'] = agent or None
         await self._restart_session()
 
     async def get_messages(self) -> list[Message]:
