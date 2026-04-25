@@ -370,8 +370,8 @@ class TestMainWindow(unittest.TestCase):
         """
         api = self._createApi()
         api._client.list_sessions = AsyncMock(return_value=[
-            SimpleNamespace(session_id="api-1", title="From API 1"),
-            SimpleNamespace(session_id="api-2", title="From API 2"),
+            SimpleNamespace(sessionId="api-1", summary="From API 1"),
+            SimpleNamespace(sessionId="api-2", summary="From API 2"),
         ])
         window = MainWindow(api=api)
         try:

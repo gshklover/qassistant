@@ -372,6 +372,13 @@ class Session(QObject):
             self._session.on(self._on_event)
 
     @property
+    def session_id(self) -> str:
+        """
+        Get the current session ID, or empty string if no active session.
+        """
+        return self._session.session_id if self._session else ""
+
+    @property
     def model(self) -> str:
         """
         Get the current model name.

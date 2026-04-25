@@ -372,12 +372,12 @@ class SessionWidget(QWidget):
         """
         Create a fresh backend session, then delete the old one.
         """
-        old_session_id = self._currentSessionId()
+        old_session_id = self._session.session_id
 
         if self._session.running:  # this is not checking if there is current turn active, it check is the session was started
             await self._session.abort()
 
-        new_session_id = self._currentSessionId()
+        new_session_id = self._session.session_id
         self._session_id = new_session_id
 
         if old_session_id and old_session_id != new_session_id:
@@ -386,14 +386,6 @@ class SessionWidget(QWidget):
                 await self._api.delete_session(old_session_id)
             except Exception:
                 traceback.print_exc()
-
-    def _currentSessionId(self) -> str:
-        """
-        Resolve the currently active backend session id when available.
-        """
-        if self._session.session is not None and self._session.session.session_id:
-            return str(self._session.session.session_id)
-        return self._session_id or ""
 
     def applySettings(self, settings: Settings) -> None:
         """
@@ -638,7 +630,6 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("qassistant")
         self._api = api
         self._settings = Settings()
-        self._tab_session_ids: list[str] = []
         self._session_list_widget = SessionListWidget(api=self._api, parent=self)
         self._session_list_widget.openSessionRequested.connect(self._onSessionOpenRequested)
         api.sessionDeleted.connect(self._onApiSessionDeleted)
@@ -873,8 +864,6 @@ class MainWindow(QMainWindow):
         """
         widget = self._tabs.widget(index)
         self._tabs.removeTab(index)
-        if 0 <= index < len(self._tab_session_ids):
-            self._tab_session_ids.pop(index)
         if widget is not None:
             widget.deleteLater()
         self._updateStatusBar()
@@ -885,29 +874,34 @@ class MainWindow(QMainWindow):
         """
         self._updateStatusBar()
 
+    def _findSessionTabIndex(self, session_id: str) -> int:
+        """
+        Find the index of the tab bound to the specified session id, or -1 if not found.
+        """
+        for index in range(self._tabs.count()):
+            widget = self._tabs.widget(index)
+            if isinstance(widget, SessionWidget) and widget.sessionId == session_id:
+                return index
+        return -1
+
     def _onSessionOpenRequested(self, session_id: str) -> None:
         """
         Open or focus a tab bound to the selected session id.
         """
-        try:
-            index = self._tab_session_ids.index(session_id)
-        except ValueError:
-            title = self._session_list_widget.sessionTitle(session_id)
-            self.addSessionTab(session_id=session_id, title=title)
+        index = self._findSessionTabIndex(session_id)
+        if index >= 0:
+            self._tabs.setCurrentIndex(index)
             return
 
-        if index != self._tabs.currentIndex():
-            self._tabs.setCurrentIndex(index)
+        self.addSessionTab(session_id=session_id)
 
     def _onApiSessionDeleted(self, session_id: str) -> None:
         """
         Close any open tab whose session was deleted via the API.
         """
-        try:
-            index = self._tab_session_ids.index(session_id)
-        except ValueError:
-            return
-        self._removeTab(index)
+        index = self._findSessionTabIndex(session_id)
+        if index >= 0:
+            self._removeTab(index)
 
     def _onSessionWorkAreaChanged(self, path: str) -> None:
         """
@@ -984,7 +978,6 @@ class MainWindow(QMainWindow):
             qtawesome.icon("mdi6.comment-multiple-outline"),
             tab_title,
         )
-        self._tab_session_ids.append(session_id)
         self._tabs.setCurrentWidget(chat_widget)
 
         self._updateStatusBar()
