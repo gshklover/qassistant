@@ -14,14 +14,12 @@ from qassistant.gui.workspaceview import WorkspaceView
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QComboBox, QDialogButtonBox, QPushButton, QTextEdit
+from PySide6.QtWidgets import QApplication, QComboBox, QDialogButtonBox, QListWidgetItem, QPushButton
 
 from qassistant.agent import DEFAULT_MODEL
 from qassistant.agent.agent import AgentAPI
-from qassistant.agent.common import TextContent
 from qassistant.gui.application import MainWindow, SessionListWidget
 from qassistant.gui.settings import Settings, SettingsDlg, SettingsView
-from qassistant.gui.widgets import TextContentView
 
 
 class TestSettings(unittest.TestCase):
@@ -79,7 +77,6 @@ class TestSettings(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             settings = Settings()
             settings.workspace_path = tmp_dir
-
         # tmp_dir is now deleted
         settings2 = Settings()
         self.assertEqual(settings2.workspace_path, "")
@@ -329,5 +326,50 @@ class TestSessionListWidget(unittest.TestCase):
             widget._list_widget.itemDoubleClicked.emit(item)
 
             self.assertEqual(opened, ["sid-A"])
+        finally:
+            widget.close()
+
+    def test_find_action_shows_search_popup(self):
+        """
+        Triggering Find action opens the SearchPopup and uses Ctrl+F shortcut.
+        """
+        widget = SessionListWidget(api=self._createApi())
+        try:
+            self.assertEqual(widget._find_action.shortcut().toString(), "Ctrl+F")
+            self.assertFalse(widget._search_popup.isVisible())
+
+            widget._find_action.trigger()
+            self.application.processEvents()
+
+            self.assertTrue(widget._search_popup.isVisible())
+        finally:
+            widget.close()
+
+    def test_find_next_and_prev_select_matching_session_titles(self):
+        """
+        Find next/prev selects matching list rows with wrap-around behavior.
+        """
+        widget = SessionListWidget(api=self._createApi())
+        try:
+            item_a = QListWidgetItem("Alpha session")
+            item_a.setData(Qt.ItemDataRole.UserRole, "sid-A")
+            item_b = QListWidgetItem("Beta session")
+            item_b.setData(Qt.ItemDataRole.UserRole, "sid-B")
+            item_c = QListWidgetItem("Gamma session")
+            item_c.setData(Qt.ItemDataRole.UserRole, "sid-C")
+            widget._list_widget.addItem(item_a)
+            widget._list_widget.addItem(item_b)
+            widget._list_widget.addItem(item_c)
+
+            widget._list_widget.setCurrentRow(-1)
+            widget._onFindNextRequested("beta")
+            self.assertEqual(widget.currentRow(), 1)
+
+            widget._onFindPrevRequested("alpha")
+            self.assertEqual(widget.currentRow(), 0)
+
+            widget._list_widget.setCurrentRow(2)
+            widget._onFindNextRequested("beta")
+            self.assertEqual(widget.currentRow(), 1)
         finally:
             widget.close()

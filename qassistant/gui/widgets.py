@@ -20,6 +20,9 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QSpacerItem,
+    QLineEdit,
+    QMenu,
+    QWidgetAction,
 )
 import qtawesome
 from typing import Callable, Generic, Sequence, TypeAlias, TypeVar
@@ -1281,3 +1284,113 @@ class ChatWidget(QWidget):
         Clear all messages from the chat history.
         """
         self._messageHistory.clear()
+
+
+class SearchPopup(QMenu):
+    """
+    Compact search popup with query entry and previous/next/cancel actions.
+    """
+
+    nextRequested = Signal(str)
+    prevRequested = Signal(str)
+    cancelRequested = Signal()
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        nextRequested: Callable[[str], None] | None = None,
+        prevRequested: Callable[[str], None] | None = None,
+        cancelRequested: Callable[[], None] | None = None,
+    ):
+        super().__init__(parent)
+
+        container = QWidget(self)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(6)
+
+        self._searchEdit = QLineEdit(container, placeholderText="Search...")
+        self._searchEdit.returnPressed.connect(self._onNextClicked)
+
+        self._prevButton = QPushButton(
+            qtawesome.icon("mdi6.chevron-up", color="#606060"),
+            "",
+            container,
+        )
+        self._prevButton.setToolTip("Previous match")
+        self._prevButton.clicked.connect(self._onPrevClicked)
+        self._nextButton = QPushButton(
+            qtawesome.icon("mdi6.chevron-down", color="#606060"),
+            "",
+            container,
+        )
+        self._nextButton.setToolTip("Next match")
+        self._nextButton.clicked.connect(self._onNextClicked)
+        self._cancelButton = QPushButton(
+            qtawesome.icon("mdi6.close", color="#606060"),
+            "",
+            container,
+        )
+        self._cancelButton.setToolTip("Cancel")
+        self._cancelButton.clicked.connect(self._onCancelClicked)
+
+        layout.addWidget(self._searchEdit, 1)
+        layout.addWidget(self._prevButton)
+        layout.addWidget(self._nextButton)
+        layout.addWidget(self._cancelButton)
+
+        action = QWidgetAction(self)
+        action.setDefaultWidget(container)
+        self.addAction(action)
+
+        if nextRequested is not None:
+            self.nextRequested.connect(nextRequested)
+        if prevRequested is not None:
+            self.prevRequested.connect(prevRequested)
+        if cancelRequested is not None:
+            self.cancelRequested.connect(cancelRequested)
+
+    def text(self) -> str:
+        """
+        Return current search query text.
+        """
+        return self._searchEdit.text()
+
+    def setText(self, value: str):
+        """
+        Set current search query text.
+        """
+        self._searchEdit.setText(value)
+
+    def clear(self):
+        """
+        Clear the search query text.
+        """
+        self._searchEdit.clear()
+
+    def focusInput(self):
+        """
+        Focus and select the entire search query.
+        """
+        self._searchEdit.setFocus()
+        self._searchEdit.selectAll()
+
+    def _onPrevClicked(self):
+        """
+        Emit previous-search request with current query.
+        """
+        self.prevRequested.emit(self.text())
+
+    def _onNextClicked(self):
+        """
+        Emit next-search request with current query.
+        """
+        self.nextRequested.emit(self.text())
+
+    def _onCancelClicked(self):
+        """
+        Emit cancel request and hide the popup.
+        """
+        self.cancelRequested.emit()
+        self.hide()
+

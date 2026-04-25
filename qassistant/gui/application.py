@@ -10,7 +10,7 @@ from typing import Optional, Any
 import PySide6.QtAsyncio as QtAsyncio
 import qtawesome
 from PySide6.QtCore import QSize, Signal, QTimer
-from PySide6.QtGui import QAction, Qt
+from PySide6.QtGui import QAction, QKeySequence, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -35,7 +35,7 @@ from .utils import wait_cursor
 from .._version import __version__
 from ..agent import AgentAPI, CustomAgentConfig, Message, MessageState, Role, Session, TextContent, ToolCallContent, load_agents
 from .settings import Settings, SettingsDlg
-from .widgets import ChatWidget, UsagePieWidget
+from .widgets import ChatWidget, SearchPopup, UsagePieWidget
 
 
 class SessionWidget(QWidget):
@@ -396,6 +396,14 @@ class SessionListWidget(QWidget):
         api.sessionDeleted.connect(self._onApiSessionDeleted)
         api.sessionUpdated.connect(self._onApiSessionUpdated)
 
+        self._find_button = QPushButton(
+            qtawesome.icon("mdi6.magnify", color="#404040"),
+            "",
+            self,
+        )
+        self._find_button.setToolTip("Find sessions (Ctrl+F)")
+        self._find_button.clicked.connect(self._onFindRequested)
+
         self._delete_button = QPushButton(
             qtawesome.icon("mdi6.delete-outline", color="darkred"), "", self
         )
@@ -409,6 +417,7 @@ class SessionListWidget(QWidget):
 
         button_layout = QHBoxLayout()
         button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.addWidget(self._find_button)
         button_layout.addStretch()
         button_layout.addWidget(self._delete_button)
 
@@ -422,6 +431,24 @@ class SessionListWidget(QWidget):
 
         # Load known sessions once the Qt event loop starts.
         QTimer.singleShot(0, self._scheduleLoadSessions)
+
+        self._search_popup = SearchPopup(
+            parent=self,
+            nextRequested=self._onFindNextRequested,
+            prevRequested=self._onFindPrevRequested,
+            cancelRequested=self._onFindCancelRequested,
+        )
+
+        self._find_action = QAction(
+            qtawesome.icon("mdi6.magnify", color="#404040"),
+            "Find",
+            self,
+            shortcut=QKeySequence("Ctrl+F"),
+            toolTip="Find sessions",
+        )
+        self._find_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._find_action.triggered.connect(self._onFindRequested)
+        self.addAction(self._find_action)
 
     def _scheduleLoadSessions(self):
         """
@@ -582,6 +609,56 @@ class SessionListWidget(QWidget):
         current_row = self._list_widget.currentRow()
         can_delete = self._list_widget.count() > 0 and current_row >= 0
         self._delete_button.setEnabled(can_delete)
+
+    def _onFindRequested(self) -> None:
+        """
+        Show search popup anchored to the find button and focus query input.
+        """
+        position = self._find_button.mapToGlobal(self._find_button.rect().bottomLeft())
+        self._search_popup.popup(position)
+        self._search_popup.focusInput()
+
+    def _onFindNextRequested(self, query: str) -> None:
+        """
+        Select the next session list item whose title matches the query.
+        """
+        self._findAndSelect(query, forward=True)
+
+    def _onFindPrevRequested(self, query: str) -> None:
+        """
+        Select the previous session list item whose title matches the query.
+        """
+        self._findAndSelect(query, forward=False)
+
+    def _onFindCancelRequested(self) -> None:
+        """
+        Close the search popup.
+        """
+        self._search_popup.hide()
+
+    def _findAndSelect(self, query: str, forward: bool = True) -> bool:
+        """
+        Find and select the next or previous list item matching query text.
+        """
+        text = (query or "").strip().lower()
+        count = self._list_widget.count()
+        if not text or count == 0:
+            return False
+
+        current_row = self._list_widget.currentRow()
+        if current_row < 0:
+            current_row = -1 if forward else 0
+
+        step = 1 if forward else -1
+        for offset in range(1, count + 1):
+            row = (current_row + step * offset) % count
+            item = self._list_widget.item(row)
+            if item is not None and text in item.text().lower():
+                self._list_widget.setCurrentRow(row)
+                self._list_widget.scrollToItem(item)
+                return True
+
+        return False
 
 
 class MainWindow(QMainWindow):
