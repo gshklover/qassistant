@@ -3,9 +3,9 @@ Application entry for qassistant GUI.
 """
 
 import asyncio
+from contextlib import contextmanager
 import sys
 import traceback
-from contextlib import contextmanager
 from typing import Optional, Any
 
 import PySide6.QtAsyncio as QtAsyncio
@@ -74,7 +74,7 @@ class SessionWidget(QWidget):
         super().__init__(parent=parent)
         self._api = api
         self._settings = settings
-        self._agent = Session(
+        self._session = Session(
             api=self._api,
             model=settings.model,
             workspace_path=workspace_path,
@@ -101,27 +101,27 @@ class SessionWidget(QWidget):
         """
         Connect Session signals directly to UI update handlers.
         """
-        self._agent.toolExecutionStart.connect(self._onToolExecutionStart)
-        self._agent.toolExecutionComplete.connect(self._onToolExecutionComplete)
-        self._agent.assistantMessageDelta.connect(self._onAssistantMessageDelta)
-        self._agent.assistantMessage.connect(self._onAssistantMessage)
-        self._agent.sessionIdle.connect(self._onSessionIdle)
-        self._agent.sessionError.connect(self._onSessionErrorEvent)
-        self._agent.sessionUsage.connect(self._onSessionUsage)
+        self._session.toolExecutionStart.connect(self._onToolExecutionStart)
+        self._session.toolExecutionComplete.connect(self._onToolExecutionComplete)
+        self._session.assistantMessageDelta.connect(self._onAssistantMessageDelta)
+        self._session.assistantMessage.connect(self._onAssistantMessage)
+        self._session.sessionIdle.connect(self._onSessionIdle)
+        self._session.sessionError.connect(self._onSessionErrorEvent)
+        self._session.sessionUsage.connect(self._onSessionUsage)
 
     @property
     def workspacePath(self) -> str:
         """
         Return current workspace path for this session.
         """
-        return self._agent.workspace_path
+        return self._session.workspace_path
 
     @property
     def usage(self) -> float:
         """
         Return the current context window usage percentage for this session.
         """
-        return self._agent.usage
+        return self._session.usage
 
     @property
     def sessionId(self) -> str:
@@ -134,7 +134,7 @@ class SessionWidget(QWidget):
         """
         Apply the specified list of custom agents and current agent selection.
         """
-        asyncio.create_task(self._agent.set_agents(agents, agent))
+        asyncio.create_task(self._session.set_agents(agents, agent))
 
     def _onSendRequested(self, message: str):
         """
@@ -160,18 +160,18 @@ class SessionWidget(QWidget):
         """
         Handle stop requests from the UI and signal the agent to stop processing.
         """
-        if self._agent.running:
+        if self._session.running:
             self._aborted = True
-            asyncio.create_task(self._agent.abort())
+            asyncio.create_task(self._session.abort())
 
     async def submit(self, message: str):
         """
         Submit user message to the agent and rely on event callbacks for streamed updates.
         """
-        if not self._agent.running:
-            await self._agent.start(session_id=self._session_id or None)
+        if not self._session.running:
+            await self._session.start(session_id=self._session_id or None)
         try:
-            await self._agent.submit(message=message)  # may throw if session was killed
+            await self._session.submit(message=message)  # may throw if session was killed
         except Exception as exc:
             import traceback
             traceback.print_exc()
@@ -371,9 +371,9 @@ class SessionWidget(QWidget):
         """
         Abort any active turn before resetting the session.
         """
-        if self._agent.running:  # this is not checking if there is current turn active, it check is the session was started
-            await self._agent.abort()
-        await self._agent.reset()
+        if self._session.running:  # this is not checking if there is current turn active, it check is the session was started
+            await self._session.abort()
+        await self._session.reset()
 
     def applySettings(self, settings: Settings) -> None:
         """
@@ -381,8 +381,8 @@ class SessionWidget(QWidget):
         """
         self._settings = settings
 
-        if self._agent.model != settings.model:
-            self._agent.model = settings.model
+        if self._session.model != settings.model:
+            self._session.model = settings.model
 
     def setWorkspacePath(self, path: str):
         """
@@ -398,7 +398,7 @@ class SessionWidget(QWidget):
         """
         Async helper for applying workspace updates.
         """
-        await self._agent.set_workspace(path)
+        await self._session.set_workspace(path)
         self.workspaceChanged.emit(self.workspacePath)
 
 

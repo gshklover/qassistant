@@ -160,137 +160,104 @@ class CustomAgentConfig(copilot.session.CustomAgentConfig):
 
 
 # map event type to handler name & argument mapping
-_EVENT_METHOD_BY_TYPE = {
-    SessionEventType.TOOL_EXECUTION_START: (
-        "on_tool_execution_start", {
-            "tool_name": "tool_name",
-            "arguments": "arguments",
-            "tool_call_id": "tool_call_id",
-            "interaction_id": "interaction_id",
-        },
-    ),
-    SessionEventType.TOOL_EXECUTION_PARTIAL_RESULT: (
-        "on_tool_execution_partial_result", {
-            "tool_call_id": "tool_call_id",
-            "partial_output": "partial_output",
-        },
-    ),
-    SessionEventType.TOOL_EXECUTION_PROGRESS: (
-        "on_tool_execution_progress", {
-            "tool_call_id": "tool_call_id",
-            "progress_message": "progress_message",
-        },
-    ),
-    SessionEventType.TOOL_EXECUTION_COMPLETE: (
-        "on_tool_execution_complete", {
-            "tool_call_id": "tool_call_id",
-            "success": "success",
-            "result": "result",
-            "error": "error",
-            "interaction_id": "interaction_id",
-        },
-    ),
-    SessionEventType.ASSISTANT_MESSAGE: (
-        "on_assistant_message", {
-            "content": "content",
-            "message_id": "message_id",
-            "interaction_id": "interaction_id",
-            "reasoning_text": "reasoning_text",
-            "tool_requests": "tool_requests",
-        },
-    ),
-    SessionEventType.ASSISTANT_MESSAGE_DELTA: (
-        "on_assistant_message_delta", {
-            "delta_content": "delta_content",
-            "message_id": "message_id",
-            "interaction_id": "interaction_id",
-        },
-    ),
-    SessionEventType.ASSISTANT_REASONING: (
-        "on_assistant_reasoning", {
-            "content": "content",
-            "reasoning_id": "reasoning_id",
-            "interaction_id": "interaction_id",
-            "reasoning_text": "reasoning_text",
-        },
-    ),
-    SessionEventType.ASSISTANT_REASONING_DELTA: (
-        "on_assistant_reasoning_delta", {
-            "delta_content": "delta_content",
-            "reasoning_id": "reasoning_id",
-            "interaction_id": "interaction_id",
-        },
-    ),
-    SessionEventType.ASSISTANT_STREAMING_DELTA: (
-        "on_assistant_streaming_delta", {
-            "total_response_size_bytes": "total_response_size_bytes",
-            "interaction_id": "interaction_id",
-        },
-    ),
-    SessionEventType.ASSISTANT_TURN_END: (
-        "on_assistant_turn_end", {
-            "turn_id": "turn_id",
-        },
-    ),
-    SessionEventType.ASSISTANT_TURN_START: (
-        "on_assistant_turn_start", {
-            "turn_id": "turn_id",
-            "interaction_id": "interaction_id",
-        },
-    ),
-    SessionEventType.SESSION_IDLE: (
-        "on_session_idle", {
-            "background_tasks": "background_tasks",
-        },
-    ),
-    SessionEventType.SESSION_TASK_COMPLETE: (
-        "on_session_task_complete", {
-            "summary": "summary",
-        },
-    ),
-    SessionEventType.SESSION_ERROR: (
-        "on_session_error", {
-            "error_type": "error_type",
-            "message": "message",
-            "error": "error",
-            "status_code": "status_code",
-            "url": "url",
-        },
-    ),
-    SessionEventType.SESSION_USAGE_INFO: (
-        "on_session_usage", {
-            "token_limit": "token_limit",
-            "current_tokens": "current_tokens",
-            "messages_length": "messages_length",
-        },
-    ),
-    SessionEventType.USER_MESSAGE: (
-        "on_user_message", {
-            "content": "content",
-            "interaction_id": "interaction_id",
-            "attachments": "attachments",
-        },
-    ),
+_EVENT_ARGS = {
+    SessionEventType.TOOL_EXECUTION_START: {
+        "tool_name": "tool_name",
+        "arguments": "arguments",
+        "tool_call_id": "tool_call_id",
+        "interaction_id": "interaction_id",
+    },
+    SessionEventType.TOOL_EXECUTION_PARTIAL_RESULT: {
+        "tool_call_id": "tool_call_id",
+        "partial_output": "partial_output",
+    },
+    SessionEventType.TOOL_EXECUTION_PROGRESS: {
+        "tool_call_id": "tool_call_id",
+        "progress_message": "progress_message",
+    },
+    SessionEventType.TOOL_EXECUTION_COMPLETE: {
+        "tool_call_id": "tool_call_id",
+        "success": "success",
+        "result": "result",
+        "error": "error",
+        "interaction_id": "interaction_id",
+    },
+    SessionEventType.ASSISTANT_MESSAGE: {
+        "content": "content",
+        "message_id": "message_id",
+        "interaction_id": "interaction_id",
+        "reasoning_text": "reasoning_text",
+        "tool_requests": "tool_requests",
+    },
+    SessionEventType.ASSISTANT_MESSAGE_DELTA: {
+        "delta_content": "delta_content",
+        "message_id": "message_id",
+        "interaction_id": "interaction_id",
+    },
+    SessionEventType.ASSISTANT_REASONING: {
+        "content": "content",
+        "reasoning_id": "reasoning_id",
+        "interaction_id": "interaction_id",
+        "reasoning_text": "reasoning_text",
+    },
+    SessionEventType.ASSISTANT_REASONING_DELTA: {
+        "delta_content": "delta_content",
+        "reasoning_id": "reasoning_id",
+        "interaction_id": "interaction_id",
+    },
+    SessionEventType.ASSISTANT_STREAMING_DELTA: {
+        "total_response_size_bytes": "total_response_size_bytes",
+        "interaction_id": "interaction_id",
+    },
+    SessionEventType.ASSISTANT_TURN_END: {
+        "turn_id": "turn_id",
+    },
+    SessionEventType.ASSISTANT_TURN_START: {
+        "turn_id": "turn_id",
+        "interaction_id": "interaction_id",
+    },
+    SessionEventType.SESSION_IDLE: {
+        "background_tasks": "background_tasks",
+    },
+    SessionEventType.SESSION_TASK_COMPLETE: {
+        "summary": "summary",
+    },
+    SessionEventType.SESSION_ERROR: {
+        "error_type": "error_type",
+        "message": "message",
+        "error": "error",
+        "status_code": "status_code",
+        "url": "url",
+    },
+    SessionEventType.SESSION_USAGE_INFO: {
+        "token_limit": "token_limit",
+        "current_tokens": "current_tokens",
+        "messages_length": "messages_length",
+    },
+    SessionEventType.USER_MESSAGE: {
+        "content": "content",
+        "interaction_id": "interaction_id",
+        "attachments": "attachments",
+    }
 }
 
 _EVENT_SIGNAL_BY_METHOD = {
-    "on_tool_execution_start": "toolExecutionStart",
-    "on_tool_execution_partial_result": "toolExecutionPartialResult",
-    "on_tool_execution_progress": "toolExecutionProgress",
-    "on_tool_execution_complete": "toolExecutionComplete",
-    "on_assistant_message": "assistantMessage",
-    "on_assistant_message_delta": "assistantMessageDelta",
-    "on_assistant_reasoning": "assistantReasoning",
-    "on_assistant_reasoning_delta": "assistantReasoningDelta",
-    "on_assistant_streaming_delta": "assistantStreamingDelta",
-    "on_assistant_turn_end": "assistantTurnEnd",
-    "on_assistant_turn_start": "assistantTurnStart",
-    "on_session_idle": "sessionIdle",
-    "on_session_task_complete": "sessionTaskComplete",
-    "on_session_error": "sessionError",
-    "on_session_usage": "sessionUsage",
-    "on_unknown_event": "unknownEvent",
-    "on_user_message": "userMessage",
+    SessionEventType.TOOL_EXECUTION_START: "toolExecutionStart",
+    SessionEventType.TOOL_EXECUTION_PARTIAL_RESULT: "toolExecutionPartialResult",
+    SessionEventType.TOOL_EXECUTION_PROGRESS: "toolExecutionProgress",
+    SessionEventType.TOOL_EXECUTION_COMPLETE: "toolExecutionComplete",
+    SessionEventType.ASSISTANT_MESSAGE: "assistantMessage",
+    SessionEventType.ASSISTANT_MESSAGE_DELTA: "assistantMessageDelta",
+    SessionEventType.ASSISTANT_REASONING: "assistantReasoning",
+    SessionEventType.ASSISTANT_REASONING_DELTA: "assistantReasoningDelta",
+    SessionEventType.ASSISTANT_STREAMING_DELTA: "assistantStreamingDelta",
+    SessionEventType.ASSISTANT_TURN_END: "assistantTurnEnd",
+    SessionEventType.ASSISTANT_TURN_START: "assistantTurnStart",
+    SessionEventType.SESSION_IDLE: "sessionIdle",
+    SessionEventType.SESSION_TASK_COMPLETE: "sessionTaskComplete",
+    SessionEventType.SESSION_ERROR: "sessionError",
+    SessionEventType.SESSION_USAGE_INFO: "sessionUsage",
+    SessionEventType.USER_MESSAGE: "userMessage",
 }
 
 
@@ -387,6 +354,22 @@ class Session(QObject):
             streaming=True,
         )
         self._usage = 0
+
+    @property
+    def session(self) -> copilot.CopilotSession:
+        """
+        Returns copilot session object associated with the agent.
+        """
+        return self._session
+
+    @session.setter
+    def session(self, new_session: copilot.CopilotSession):
+        """
+        Update the session object associated with the agent.
+        """
+        if self._session is not new_session:
+            self._session = new_session
+            self._session.on(self._on_event)
 
     @property
     def model(self) -> str:
@@ -535,6 +518,30 @@ class Session(QObject):
         self._config['agent'] = agent or None
         await self._restart_session()
 
+    async def get_history(self) -> list[copilot.session.SessionEvent]:
+        """
+        Get all events from the session events history.
+        Reads and returns ~/.copilot/session-state/<session-id>/events.jsonl
+        """
+        if not self._session:
+            raise RuntimeError("Agent is not running. Call start() first.")
+
+        session_id = self._session.session_id
+        events_file = pathlib.Path.home() / ".copilot" / "session-state" / session_id / "events.jsonl"
+        if not events_file.exists():
+            return []
+
+        events = []
+        with events_file.open() as stream:
+            for line in stream:
+                try:
+                    event_data = json.loads(line)
+                    events.append(copilot.session.SessionEvent(type=SessionEventType(event_data.get('type')), data=event_data.get("data", {})))
+                except json.JSONDecodeError:
+                    continue
+
+        return events
+
     async def _restart_session(self):
         """
         Restart the current session, preserving the session id.
@@ -566,18 +573,17 @@ class Session(QObject):
         """
         Route an event to all configured handlers using event-type-specific hooks.
         """
-        event_info = _EVENT_METHOD_BY_TYPE.get(event.type, None)
+        event_info = _EVENT_ARGS.get(event.type, None)
         if event_info is None:
-            self._emitEventSignal("on_unknown_event", {
+            self._emitEventSignal('unknownEvent', {
                 "event_type": event.type.value,
                 "event": event,
             })
             return
 
-        method_name, attributes = event_info
         args = {
             arg_name: getattr(event.data, attr_name, None)
-            for arg_name, attr_name in attributes.items()
+            for arg_name, attr_name in event_info.items()
         }
 
         # Transform SESSION_USAGE_INFO into a single usage_percentage
@@ -589,9 +595,9 @@ class Session(QObject):
             args = {"usage_percentage": usage_percentage}
             self._usage = usage_percentage
 
-        self._emitEventSignal(method_name, args)
+        self._emitEventSignal(event.type, args)
 
-    def _emitEventSignal(self, method_name: str, args: dict[str, Any]):
+    def _emitEventSignal(self, method_name: SessionEventType | str, args: dict[str, Any]):
         """
         Emit the Qt signal corresponding to the SessionEventHandler callback name.
         """
