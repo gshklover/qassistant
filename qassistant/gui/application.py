@@ -3,7 +3,6 @@ Application entry for qassistant GUI.
 """
 
 import asyncio
-from contextlib import contextmanager
 import sys
 import traceback
 from typing import Optional, Any
@@ -32,26 +31,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .utils import wait_cursor
 from .._version import __version__
 from ..agent import AgentAPI, CustomAgentConfig, Message, MessageState, Role, Session, TextContent, ToolCallContent, load_agents
 from .settings import Settings, SettingsDlg
 from .widgets import ChatWidget, UsagePieWidget
-
-
-@contextmanager
-def wait_cursor():
-    """
-    Override the application cursor with an hourglass while inside the context.
-    """
-    if QApplication.instance() is None:
-        yield
-        return
-
-    QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-    try:
-        yield
-    finally:
-        QApplication.restoreOverrideCursor()
 
 
 class SessionWidget(QWidget):
