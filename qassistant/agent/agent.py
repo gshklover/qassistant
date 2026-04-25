@@ -1,5 +1,8 @@
 """
 Agent implementation. Provides a small adapter around GenAI SDK and tool execution.
+
+NOTES:
+    * copilot events description: https://docs.github.com/en/copilot/how-tos/copilot-sdk/use-copilot-sdk/streaming-events
 """
 import asyncio
 import traceback
@@ -20,7 +23,7 @@ from PySide6.QtCore import QObject, Signal
 from typing import Any, Callable, Sequence
 
 from .tools.pythonshell import PythonShell
-from .common import Message, MessageState, Role, TextContent, ToolCallContent
+from .common import Message, Role, TextContent
 
 # agent defaults:
 DEFAULT_MODEL = "gpt-5-mini"
