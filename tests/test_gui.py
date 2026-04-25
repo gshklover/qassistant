@@ -417,6 +417,31 @@ class TestMainWindow(unittest.TestCase):
         finally:
             window.close()
 
+    def test_session_rebind_updates_tab_mapping_before_old_delete_event(self):
+        """
+        Rebinding a tab to a new session id prevents old delete events from closing it.
+        """
+        window = MainWindow(api=self._createApi())
+        try:
+            window.addSessionTab(session_id="old-session", title="Existing")
+            self.application.processEvents()
+
+            self.assertEqual(window._tabs.count(), 1)
+            self.assertEqual(window._tab_session_ids, ["old-session"])
+
+            window._onSessionIdRebound("old-session", "new-session")
+            self.assertEqual(window._tab_session_ids, ["new-session"])
+
+            window._onApiSessionDeleted("old-session")
+            self.application.processEvents()
+            self.assertEqual(window._tabs.count(), 1)
+
+            window._onApiSessionDeleted("new-session")
+            self.application.processEvents()
+            self.assertEqual(window._tabs.count(), 0)
+        finally:
+            window.close()
+
 
 class TestSessionListWidget(unittest.TestCase):
     """

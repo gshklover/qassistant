@@ -62,6 +62,7 @@ class SessionWidget(QWidget):
 
     workspaceChanged = Signal(str)
     usageChanged = Signal(float)
+    sessionIdRebound = Signal(str, str)
 
     def __init__(
         self,
@@ -369,11 +370,30 @@ class SessionWidget(QWidget):
 
     async def _resetAsync(self):
         """
-        Abort any active turn before resetting the session.
+        Create a fresh backend session, then delete the old one.
         """
+        old_session_id = self._currentSessionId()
+
         if self._session.running:  # this is not checking if there is current turn active, it check is the session was started
             await self._session.abort()
-        await self._session.reset()
+
+        new_session_id = self._currentSessionId()
+        self._session_id = new_session_id
+
+        if old_session_id and old_session_id != new_session_id:
+            self.sessionIdRebound.emit(old_session_id, new_session_id)
+            try:
+                await self._api.delete_session(old_session_id)
+            except Exception:
+                traceback.print_exc()
+
+    def _currentSessionId(self) -> str:
+        """
+        Resolve the currently active backend session id when available.
+        """
+        if self._session.session is not None and self._session.session.session_id:
+            return str(self._session.session.session_id)
+        return self._session_id or ""
 
     def applySettings(self, settings: Settings) -> None:
         """
@@ -958,6 +978,7 @@ class MainWindow(QMainWindow):
         )
         chat_widget.workspaceChanged.connect(self._onSessionWorkAreaChanged)
         chat_widget.usageChanged.connect(self._onSessionUsageChanged)
+        chat_widget.sessionIdRebound.connect(self._onSessionIdRebound)
         self._tabs.addTab(
             chat_widget,
             qtawesome.icon("mdi6.comment-multiple-outline"),
@@ -974,6 +995,24 @@ class MainWindow(QMainWindow):
         Get the current session tab widget. This can be used to route messages to the correct session.
         """
         return self._tabs.currentWidget()
+
+    def _onSessionIdRebound(self, old_session_id: str, new_session_id: str):
+        """
+        Keep tab-to-session mapping aligned when a widget replaces its backend session.
+        """
+        widget = self.sender()
+        if isinstance(widget, SessionWidget):
+            index = self._tabs.indexOf(widget)
+            if index >= 0 and index < len(self._tab_session_ids):
+                self._tab_session_ids[index] = new_session_id
+                return
+
+        try:
+            index = self._tab_session_ids.index(old_session_id)
+        except ValueError:
+            return
+
+        self._tab_session_ids[index] = new_session_id
 
 
 class Application(QApplication):

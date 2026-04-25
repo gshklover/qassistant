@@ -458,23 +458,6 @@ class Session(QObject):
             await self._session.disconnect()
             self._session = None
 
-    async def reset(self):
-        """
-        Reset the agent session.
-        """
-        if self._session:
-            await self._session.disconnect()
-
-        self._session = await self._api.create_session(
-            on_permission_request=self._config.get("on_permission_request"),
-            model=self._config.get("model", DEFAULT_MODEL),
-            tools=self._config.get("tools"),
-            streaming=self._config.get("streaming", True),
-            custom_agents=self._config.get("custom_agents"),
-            agent=self._config.get("agent"),
-        )
-        self._session.on(self._on_event)
-
     async def send(self, message: str) -> copilot.session.SessionEvent:
         """
         Send a message to the agent and return the response.
