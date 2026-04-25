@@ -94,7 +94,7 @@ class SessionWidget(QWidget):
         layout.setColumnStretch(0, 1)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # TODO: synchronize history with the session:
+        asyncio.create_task(self._updateHistoryAsync())
 
     @property
     def workspacePath(self) -> str:
@@ -359,6 +359,13 @@ class SessionWidget(QWidget):
         Create a fresh backend session, then delete the old one.
         """
         await self._session.reset()
+
+    async def _updateHistoryAsync(self):
+        """
+        Update the chat history from the current session
+        """
+        for message in await self._session.get_messages():
+            self._chat_widget.appendMessage(message)
 
     def applySettings(self, settings: Settings) -> None:
         """

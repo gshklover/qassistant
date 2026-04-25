@@ -20,7 +20,7 @@ from PySide6.QtCore import QObject, Signal
 from typing import Any, Callable, Sequence
 
 from .tools.pythonshell import PythonShell
-
+from .common import Message, MessageState, Role, TextContent, ToolCallContent
 
 # agent defaults:
 DEFAULT_MODEL = "gpt-5-mini"
@@ -481,11 +481,27 @@ class Session(QObject):
         self._config['agent'] = agent or None
         await self._restart_session()
 
-    async def get_messages(self) -> list[copilot.session.SessionEvent]:
+    async def get_messages(self) -> list[Message]:
         """
         Get all events from the session events history.
         """
-        return await self._session.get_messages()
+        events = await self._session.get_messages()
+
+        # convert events to list of user & assistant messages
+        result = []
+        for event in events:
+            if event.type == SessionEventType.USER_MESSAGE:
+                result.append(Message(
+                    role=Role.USER,
+                    content=[TextContent(text=event.data.content)]
+                ))
+            elif event.type == SessionEventType.ASSISTANT_MESSAGE:
+                result.append(Message(
+                    role=Role.ASSISTANT,
+                    content=[TextContent(text=event.data.content)]
+                ))
+
+        return result
 
     async def _restart_session(self):
         """
