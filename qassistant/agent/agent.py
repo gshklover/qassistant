@@ -6,7 +6,6 @@ import traceback
 
 import copilot
 from copilot.generated.session_events import SessionEventType
-from copilot.generated.rpc import SessionAgentSelectParams
 import dataclasses
 import functools
 import httpx

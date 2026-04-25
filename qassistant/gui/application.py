@@ -33,8 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from .._version import __version__
-from ..agent import AgentAPI, CustomAgentConfig, Message, Role, Session, TextContent, load_agents
-from ..agent.common import MessageState, ToolCallContent
+from ..agent import AgentAPI, CustomAgentConfig, Message, MessageState, Role, Session, TextContent, ToolCallContent, load_agents
 from .settings import Settings, SettingsDlg
 from .widgets import ChatWidget, UsagePieWidget
 
@@ -72,7 +71,13 @@ class SessionWidget(QWidget):
         super().__init__(parent=parent)
         self._settings = settings
         self._session = session
-        self._bindAgentSignals()
+        self._session.toolExecutionStart.connect(self._onToolExecutionStart)
+        self._session.toolExecutionComplete.connect(self._onToolExecutionComplete)
+        self._session.assistantMessageDelta.connect(self._onAssistantMessageDelta)
+        self._session.assistantMessage.connect(self._onAssistantMessage)
+        self._session.sessionIdle.connect(self._onSessionIdle)
+        self._session.sessionError.connect(self._onSessionErrorEvent)
+        self._session.sessionUsage.connect(self._onSessionUsage)
         self._chat_widget = ChatWidget(
             parent=self,
             sendRequested=self._onSendRequested,
@@ -89,17 +94,7 @@ class SessionWidget(QWidget):
         layout.setColumnStretch(0, 1)
         layout.setContentsMargins(0, 0, 0, 0)
 
-    def _bindAgentSignals(self):
-        """
-        Connect Session signals directly to UI update handlers.
-        """
-        self._session.toolExecutionStart.connect(self._onToolExecutionStart)
-        self._session.toolExecutionComplete.connect(self._onToolExecutionComplete)
-        self._session.assistantMessageDelta.connect(self._onAssistantMessageDelta)
-        self._session.assistantMessage.connect(self._onAssistantMessage)
-        self._session.sessionIdle.connect(self._onSessionIdle)
-        self._session.sessionError.connect(self._onSessionErrorEvent)
-        self._session.sessionUsage.connect(self._onSessionUsage)
+        # TODO: synchronize history with the session:
 
     @property
     def workspacePath(self) -> str:
