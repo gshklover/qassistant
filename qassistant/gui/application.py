@@ -62,24 +62,16 @@ class SessionWidget(QWidget):
 
     workspaceChanged = Signal(str)
     usageChanged = Signal(float)
-    sessionIdRebound = Signal(str, str)
 
     def __init__(
         self,
-        api: AgentAPI,
+        session: Session,
         settings: Settings,
-        parent: Optional[QWidget] = None,
-        workspace_path: str = "",
-        session_id: str = "",
+        parent: Optional[QWidget] = None
     ):
         super().__init__(parent=parent)
-        self._api = api
         self._settings = settings
-        self._session = Session(
-            api=self._api,
-            model=settings.model,
-            workspace_path=workspace_path,
-        )
+        self._session = session
         self._bindAgentSignals()
         self._chat_widget = ChatWidget(
             parent=self,
@@ -87,7 +79,6 @@ class SessionWidget(QWidget):
             stopRequested=self._onStopRequested,
         )
         self._response_message: Message | None = None
-        self._session_id = session_id
         self._tool_call_content_map: dict[str, ToolCallContent] = {}
         self._has_delta_content = False
         self._aborted = False
@@ -127,9 +118,9 @@ class SessionWidget(QWidget):
     @property
     def sessionId(self) -> str:
         """
-        Return bound session id for resumed sessions, if any.
+        Return bound session id
         """
-        return self._session_id
+        return self._session.session_id
 
     def setAgents(self, agents: list[CustomAgentConfig], agent: str):
         """
@@ -372,20 +363,7 @@ class SessionWidget(QWidget):
         """
         Create a fresh backend session, then delete the old one.
         """
-        old_session_id = self._session.session_id
-
-        if self._session.running:  # this is not checking if there is current turn active, it check is the session was started
-            await self._session.abort()
-
-        new_session_id = self._session.session_id
-        self._session_id = new_session_id
-
-        if old_session_id and old_session_id != new_session_id:
-            self.sessionIdRebound.emit(old_session_id, new_session_id)
-            try:
-                await self._api.delete_session(old_session_id)
-            except Exception:
-                traceback.print_exc()
+        await self._session.reset()
 
     def applySettings(self, settings: Settings) -> None:
         """
@@ -394,7 +372,7 @@ class SessionWidget(QWidget):
         self._settings = settings
 
         if self._session.model != settings.model:
-            self._session.model = settings.model
+            asyncio.create_task(self._session.set_model(settings.model))
 
     def setWorkspacePath(self, path: str):
         """
@@ -874,7 +852,7 @@ class MainWindow(QMainWindow):
         """
         self._updateStatusBar()
 
-    def _findSessionTabIndex(self, session_id: str) -> int:
+    def _findSession(self, session_id: str) -> int:
         """
         Find the index of the tab bound to the specified session id, or -1 if not found.
         """
@@ -888,7 +866,7 @@ class MainWindow(QMainWindow):
         """
         Open or focus a tab bound to the selected session id.
         """
-        index = self._findSessionTabIndex(session_id)
+        index = self._findSession(session_id)
         if index >= 0:
             self._tabs.setCurrentIndex(index)
             return
@@ -899,7 +877,7 @@ class MainWindow(QMainWindow):
         """
         Close any open tab whose session was deleted via the API.
         """
-        index = self._findSessionTabIndex(session_id)
+        index = self._findSession(session_id)
         if index >= 0:
             self._removeTab(index)
 
@@ -956,56 +934,40 @@ class MainWindow(QMainWindow):
         self._workspace_status_label.setText(text)
         self._workspace_status_label.setToolTip(text)
 
-    def addSessionTab(self, session_id: str = "", title: str = "") -> ChatWidget:
+    def addSessionTab(self, session_id: str = ""):
         """
         Add a new session tab to the main window.
         """
+        asyncio.create_task(self._addSessionTabAsync(session_id))
+
+    async def _addSessionTabAsync(self, session_id: str = ""):
+        """
+        Async handler for adding a new session tab.
+
+        :param session_id: optional session ID to resume
+        """
         n = self._tabs.count() + 1
-        tab_title = title or f"Session {n}"
-        stored_path = self._settings.workspace_path
+        tab_title = f"Session {n}"
+
+        if session_id:
+            session = await self._api.resume_session(session_id, workspace_directory=self._settings.workspace_path)
+        else:
+            session = await self._api.create_session(workspace_directory=self._settings.workspace_path)
+
         chat_widget = SessionWidget(
-            api=self._api,
+            session=session,
             settings=self._settings,
-            parent=self._tabs,
-            workspace_path=stored_path,
-            session_id=session_id,
+            parent=self._tabs
         )
         chat_widget.workspaceChanged.connect(self._onSessionWorkAreaChanged)
         chat_widget.usageChanged.connect(self._onSessionUsageChanged)
-        chat_widget.sessionIdRebound.connect(self._onSessionIdRebound)
         self._tabs.addTab(
             chat_widget,
             qtawesome.icon("mdi6.comment-multiple-outline"),
             tab_title,
         )
         self._tabs.setCurrentWidget(chat_widget)
-
         self._updateStatusBar()
-        return chat_widget
-
-    def currentSessionTab(self) -> ChatWidget:
-        """
-        Get the current session tab widget. This can be used to route messages to the correct session.
-        """
-        return self._tabs.currentWidget()
-
-    def _onSessionIdRebound(self, old_session_id: str, new_session_id: str):
-        """
-        Keep tab-to-session mapping aligned when a widget replaces its backend session.
-        """
-        widget = self.sender()
-        if isinstance(widget, SessionWidget):
-            index = self._tabs.indexOf(widget)
-            if index >= 0 and index < len(self._tab_session_ids):
-                self._tab_session_ids[index] = new_session_id
-                return
-
-        try:
-            index = self._tab_session_ids.index(old_session_id)
-        except ValueError:
-            return
-
-        self._tab_session_ids[index] = new_session_id
 
 
 class Application(QApplication):
@@ -1025,7 +987,7 @@ class Application(QApplication):
         self._api = AgentAPI()
         self.main_window = MainWindow(api=self._api)
         self.main_window.resize(QSize(800, 600))
-        self.main_window.addSessionTab()
+        # self.main_window.addSessionTab()
         self.main_window.show()
         self.main_window.raise_()
 

@@ -2,6 +2,8 @@
 Agent implementation. Provides a small adapter around GenAI SDK and tool execution.
 """
 import asyncio
+import traceback
+
 import copilot
 from copilot.generated.session_events import SessionEventType
 from copilot.generated.rpc import SessionAgentSelectParams
@@ -16,7 +18,7 @@ from openai import AsyncOpenAI
 import os
 import pathlib
 from PySide6.QtCore import QObject, Signal
-from typing import Any, Callable, Sequence, Optional
+from typing import Any, Callable, Sequence
 
 from .tools.pythonshell import PythonShell
 
@@ -103,53 +105,70 @@ class AgentAPI(QObject):
     async def create_session(
         self,
         *,
-        working_directory: str = "",
-        on_permission_request: Any = None,
+        workspace_directory: str = "",
         model: str = DEFAULT_MODEL,
-        tools: list[Any] | None = None,
-        streaming: bool = True,
         custom_agents: list[Any] | None = None,
         agent: str | None = None,
-    ):
-        """
-        Create a Copilot session.
-        """
-        return await self._client.create_session(
-            working_directory=working_directory,
-            on_permission_request=on_permission_request,
-            model=model,
-            tools=tools,
-            streaming=streaming,
-            custom_agents=custom_agents,
-            agent=agent,
+    ) -> Session:
+        shell = PythonShell()  # shared python shell instance for tool execution
+        tools = [
+            # execution shell:
+            as_tool(shell.execute, name='python_shell_execute'),
+            as_tool(shell.get_variables, name='python_shell_get_variables'),
+            # *[as_tool(tool) for tool in (tools or ())],
+        ]
+        config = {
+            'tools': tools,
+            'streaming': True,
+            'on_permission_request': copilot.session.PermissionHandler.approve_all,
+        }
+        return Session(
+            session=await self._client.create_session(
+                working_directory=workspace_directory,
+                model=model,
+                custom_agents=custom_agents,
+                agent=agent,
+                **config
+            ),
+            shell=shell,
+            session_config=config
         )
 
     async def resume_session(
         self,
-        *,
         session_id: str,
-        working_directory: str = "",
-        on_permission_request: Any = None,
+        workspace_directory: str = "",
         model: str = DEFAULT_MODEL,
-        tools: list[Any] | None = None,
-        streaming: bool = True,
         custom_agents: list[Any] | None = None,
-        agent: str | None = None,
-    ):
+        agent: str | None = None
+    ) -> Session:
         """
-        Resume a Copilot session.
+        Resume an existing session by id.
         """
-        return await self._client.resume_session(
-            session_id=session_id,
-            working_directory=working_directory,
-            on_permission_request=on_permission_request,
-            model=model,
-            tools=tools,
-            streaming=streaming,
-            custom_agents=custom_agents,
-            agent=agent,
+        shell = PythonShell()  # shared python shell instance for tool execution
+        tools = [
+            # execution shell:
+            as_tool(shell.execute, name='python_shell_execute'),
+            as_tool(shell.get_variables, name='python_shell_get_variables'),
+            # *[as_tool(tool) for tool in (tools or ())],
+        ]
+        config = {
+            'tools': tools,
+            'streaming': True,
+            'on_permission_request': copilot.session.PermissionHandler.approve_all,
+        }
+        return Session(
+            session=await self._client.resume_session(
+                session_id,
+                working_directory=workspace_directory,
+                model=model,
+                custom_agents=custom_agents,
+                agent=agent,
+                **config
+            ),
+            shell=shell,
+            session_config=config
         )
-
 
 
 class CustomAgentConfig(copilot.session.CustomAgentConfig):
@@ -285,7 +304,8 @@ def as_tool(func: Callable, **kwargs) -> Callable:
 
 class Session(QObject):
     """
-    Wraps around a single session with start/stop/reset and tool integration.
+    Wraps around a single session.
+    Exposes session events using Qt signals.
     """
 
     # Signature: (tool_name: str | None, arguments: Any, tool_call_id: str | None, interaction_id: str | None)
@@ -325,35 +345,24 @@ class Session(QObject):
 
     def __init__(
         self,
-        api: AgentAPI,
+        session: copilot.CopilotSession,
+        shell: PythonShell = None,
         model: str = DEFAULT_MODEL,
-        tools: list[str | Callable] | None = None,
         workspace_path: str = "",
+        session_config: dict[str, Any] = None,
         parent: QObject = None
     ):
         """
         Initialize the agent with the specified model, tools, and event handlers.
         """
         super().__init__(parent)
-
+        self._session = session
+        self._shell = shell
+        self._session_config = session_config
         self._model = model
-        self._api = api
-        self._shell = PythonShell()  # shared python shell instance for tool execution
-        self._session: Optional[copilot.CopilotSession] = None
         self._workspace_path = workspace_path or os.getcwd()
-        self._tools = [
-            # execution shell:
-            as_tool(self._shell.execute, name='python_shell_execute'),
-            as_tool(self._shell.get_variables, name='python_shell_get_variables'),
-            *[as_tool(tool) for tool in (tools or ())],
-        ]
-        self._config = dict(
-            on_permission_request=copilot.session.PermissionHandler.approve_all,
-            model=model,
-            tools=self._tools,
-            streaming=True,
-        )
         self._usage = 0
+        self._session.on(self._on_event)
 
     @property
     def session(self) -> copilot.CopilotSession:
@@ -361,15 +370,6 @@ class Session(QObject):
         Returns copilot session object associated with the agent.
         """
         return self._session
-
-    @session.setter
-    def session(self, new_session: copilot.CopilotSession):
-        """
-        Update the session object associated with the agent.
-        """
-        if self._session is not new_session:
-            self._session = new_session
-            self._session.on(self._on_event)
 
     @property
     def session_id(self) -> str:
@@ -414,56 +414,17 @@ class Session(QObject):
         """
         return self._usage
 
-    async def start(self, session_id: str = None):
+    async def start(self):
         """
-        Start the agent by initializing the Copilot client.
-
-        :param session_id: The session ID to resume. If not specified, a new session is created.
+        Start the session
         """
-        if self._session is not None:
-            raise RuntimeError("Agent is already running")
-
-        on_permission_request = self._config.get("on_permission_request")
-        model = self._config.get("model", DEFAULT_MODEL)
-        tools = self._config.get("tools")
-        streaming = self._config.get("streaming", True)
-        custom_agents = self._config.get("custom_agents")
-        agent = self._config.get("agent")
-
-        if session_id is not None:
-            self._session = await self._api.resume_session(
-                session_id=session_id,
-                working_directory=self._workspace_path,
-                on_permission_request=on_permission_request,
-                model=model,
-                tools=tools,
-                streaming=streaming,
-                custom_agents=custom_agents,
-                agent=agent,
-            )
-        else:
-            self._session = await self._api.create_session(
-                working_directory=self._workspace_path,
-                on_permission_request=on_permission_request,
-                model=model,
-                tools=tools,
-                streaming=streaming,
-                custom_agents=custom_agents,
-                agent=agent,
-            )
-
-        if self._config.get('agent', None):
-            await self._session.rpc.agent.select(SessionAgentSelectParams(name=self._config.get('agent')))
-
-        self._session.on(self._on_event)
+        pass
 
     async def stop(self):
         """
         Stop the agent and clean up resources.
         """
-        if self._session:
-            await self._session.disconnect()
-            self._session = None
+        await self._session.disconnect()
 
     async def send(self, message: str) -> copilot.session.SessionEvent:
         """
@@ -492,6 +453,19 @@ class Session(QObject):
         if self._session:
             await self._session.abort()
 
+    async def reset(self):
+        """
+        Reset session contents. Not implemented yet - no clear API to implement this using copilot client.
+        """
+        pass
+
+    async def set_model(self, model: str):
+        """
+        Update the model used by the session. This will restart the session with the new model.
+        """
+        self._model = model
+        await self._session.set_model(model)
+
     async def set_workspace(self, path: str):
         """
         Set the workspace to the specified path.
@@ -508,38 +482,33 @@ class Session(QObject):
         self._config['agent'] = agent or None
         await self._restart_session()
 
-    async def get_history(self) -> list[copilot.session.SessionEvent]:
+    async def get_messages(self) -> list[copilot.session.SessionEvent]:
         """
         Get all events from the session events history.
-        Reads and returns ~/.copilot/session-state/<session-id>/events.jsonl
         """
-        if not self._session:
-            raise RuntimeError("Agent is not running. Call start() first.")
-
-        session_id = self._session.session_id
-        events_file = pathlib.Path.home() / ".copilot" / "session-state" / session_id / "events.jsonl"
-        if not events_file.exists():
-            return []
-
-        events = []
-        with events_file.open() as stream:
-            for line in stream:
-                try:
-                    event_data = json.loads(line)
-                    events.append(copilot.session.SessionEvent(type=SessionEventType(event_data.get('type')), data=event_data.get("data", {})))
-                except json.JSONDecodeError:
-                    continue
-
-        return events
+        return await self._session.get_messages()
 
     async def _restart_session(self):
         """
         Restart the current session, preserving the session id.
+        Called when changing workspace directory.
         """
-        if self._session is not None:
-            session_id = self._session.session_id
-            await self.stop()
-            await self.start(session_id=session_id)
+        client = self._session._client  # noqa: accessing protected member for lack of public API
+        session_id = self._session.session_id
+
+        try:
+            await self._session.disconnect()
+            new_session = await client.resume_session(
+                session_id=session_id,
+                working_directory=self._workspace_path,
+                model=self._model,
+                **self._session_config
+            )
+            new_session.on(self._on_event)
+            self._session = new_session
+        except:  # noqa
+            traceback.print_exc()
+            return
 
     async def __aenter__(self):
         """
