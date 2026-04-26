@@ -1293,6 +1293,7 @@ class SearchPopup(QMenu):
 
     nextRequested = Signal(str)
     prevRequested = Signal(str)
+    queryEdited = Signal(str)
     cancelRequested = Signal()
 
     def __init__(
@@ -1300,6 +1301,7 @@ class SearchPopup(QMenu):
         parent: QWidget | None = None,
         nextRequested: Callable[[str], None] | None = None,
         prevRequested: Callable[[str], None] | None = None,
+        queryEdited: Callable[[str], None] | None = None,
         cancelRequested: Callable[[], None] | None = None,
     ):
         super().__init__(parent)
@@ -1311,6 +1313,7 @@ class SearchPopup(QMenu):
 
         self._searchEdit = QLineEdit(container, placeholderText="Search...")
         self._searchEdit.returnPressed.connect(self._onNextClicked)
+        self._searchEdit.textChanged.connect(self._onTextChanged)
 
         self._prevButton = QPushButton(
             qtawesome.icon("mdi6.chevron-up", color="#606060"),
@@ -1347,6 +1350,8 @@ class SearchPopup(QMenu):
             self.nextRequested.connect(nextRequested)
         if prevRequested is not None:
             self.prevRequested.connect(prevRequested)
+        if queryEdited is not None:
+            self.queryEdited.connect(queryEdited)
         if cancelRequested is not None:
             self.cancelRequested.connect(cancelRequested)
 
@@ -1386,6 +1391,12 @@ class SearchPopup(QMenu):
         Emit next-search request with current query.
         """
         self.nextRequested.emit(self.text())
+
+    def _onTextChanged(self, text: str):
+        """
+        Emit incremental query update when text is edited.
+        """
+        self.queryEdited.emit(text)
 
     def _onCancelClicked(self):
         """

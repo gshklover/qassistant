@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QStatusBar,
@@ -412,8 +413,10 @@ class SessionListWidget(QWidget):
         self._list_widget = QListWidget(parent=self)
         self._list_widget.setObjectName("sessionListItems")
         self._list_widget.setAlternatingRowColors(True)
+        self._list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._list_widget.currentRowChanged.connect(self._onCurrentRowChanged)
         self._list_widget.itemDoubleClicked.connect(self._onItemDoubleClicked)
+        self._list_widget.customContextMenuRequested.connect(self._onListContextMenuRequested)
 
         button_layout = QHBoxLayout()
         button_layout.setContentsMargins(0, 0, 0, 0)
@@ -427,8 +430,6 @@ class SessionListWidget(QWidget):
         layout.addLayout(button_layout)
         layout.addWidget(self._list_widget)
 
-        self._updateDeleteButton()
-
         # Load known sessions once the Qt event loop starts.
         QTimer.singleShot(0, self._scheduleLoadSessions)
 
@@ -436,12 +437,13 @@ class SessionListWidget(QWidget):
             parent=self,
             nextRequested=self._onFindNextRequested,
             prevRequested=self._onFindPrevRequested,
+            queryEdited=self._onFindQueryEdited,
             cancelRequested=self._onFindCancelRequested,
         )
 
         self._find_action = QAction(
             qtawesome.icon("mdi6.magnify", color="#404040"),
-            "Find",
+            "Find...",
             self,
             shortcut=QKeySequence("Ctrl+F"),
             toolTip="Find sessions",
@@ -449,6 +451,16 @@ class SessionListWidget(QWidget):
         self._find_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._find_action.triggered.connect(self._onFindRequested)
         self.addAction(self._find_action)
+
+        self._delete_action = QAction(
+            qtawesome.icon("mdi6.delete-outline", color="darkred"),
+            "Delete",
+            self,
+            toolTip="Delete the selected session",
+        )
+        self._delete_action.triggered.connect(self._onDeleteSessionClicked)
+
+        self._updateDeleteButton()
 
     def _scheduleLoadSessions(self):
         """
@@ -609,6 +621,24 @@ class SessionListWidget(QWidget):
         current_row = self._list_widget.currentRow()
         can_delete = self._list_widget.count() > 0 and current_row >= 0
         self._delete_button.setEnabled(can_delete)
+        self._delete_action.setEnabled(can_delete)
+
+    def _onListContextMenuRequested(self, position):
+        """
+        Show a context menu for session list actions.
+        """
+        menu = self._createListContextMenu()
+        menu.popup(self._list_widget.mapToGlobal(position))
+
+    def _createListContextMenu(self) -> QMenu:
+        """
+        Build the context menu for the session list.
+        """
+        self._updateDeleteButton()
+        menu = QMenu(self)
+        menu.addAction(self._find_action)
+        menu.addAction(self._delete_action)
+        return menu
 
     def _onFindRequested(self) -> None:
         """
@@ -622,13 +652,19 @@ class SessionListWidget(QWidget):
         """
         Select the next session list item whose title matches the query.
         """
-        self._findAndSelect(query, forward=True)
+        self._findAndSelect(query, forward=True, includeCurrent=False)
 
     def _onFindPrevRequested(self, query: str) -> None:
         """
         Select the previous session list item whose title matches the query.
         """
-        self._findAndSelect(query, forward=False)
+        self._findAndSelect(query, forward=False, includeCurrent=False)
+
+    def _onFindQueryEdited(self, query: str) -> None:
+        """
+        Incrementally select matching items while allowing the current row to match.
+        """
+        self._findAndSelect(query, forward=True, includeCurrent=True)
 
     def _onFindCancelRequested(self) -> None:
         """
@@ -636,7 +672,7 @@ class SessionListWidget(QWidget):
         """
         self._search_popup.hide()
 
-    def _findAndSelect(self, query: str, forward: bool = True) -> bool:
+    def _findAndSelect(self, query: str, forward: bool = True, includeCurrent: bool = False) -> bool:
         """
         Find and select the next or previous list item matching query text.
         """
@@ -647,10 +683,14 @@ class SessionListWidget(QWidget):
 
         current_row = self._list_widget.currentRow()
         if current_row < 0:
-            current_row = -1 if forward else 0
+            if forward:
+                current_row = 0 if includeCurrent else -1
+            else:
+                current_row = count - 1 if includeCurrent else 0
 
         step = 1 if forward else -1
-        for offset in range(1, count + 1):
+        start_offset = 0 if includeCurrent else 1
+        for offset in range(start_offset, count + start_offset):
             row = (current_row + step * offset) % count
             item = self._list_widget.item(row)
             if item is not None and text in item.text().lower():
@@ -894,9 +934,6 @@ class MainWindow(QMainWindow):
         """
         Close the tab at the given index. The last tab cannot be closed.
         """
-        if self._tabs.count() <= 1:
-            return
-
         self._removeTab(index)
 
     def _removeTab(self, index: int):

@@ -503,7 +503,7 @@ class Session(QObject):
         Restart the current session, preserving the session id.
         Called when changing workspace directory.
         """
-        client = self._session._client  # noqa: accessing protected member for lack of public API
+        client = self._session._client  # FIXME: this is the JsonRPC client (not copilot.CopilotClient)
         session_id = self._session.session_id
 
         try:

@@ -347,29 +347,71 @@ class TestSessionListWidget(unittest.TestCase):
 
     def test_find_next_and_prev_select_matching_session_titles(self):
         """
-        Find next/prev selects matching list rows with wrap-around behavior.
+        Incremental find includes current row; next/prev explicitly skip.
         """
         widget = SessionListWidget(api=self._createApi())
         try:
-            item_a = QListWidgetItem("Alpha session")
+            item_a = QListWidgetItem("Alpha one")
             item_a.setData(Qt.ItemDataRole.UserRole, "sid-A")
-            item_b = QListWidgetItem("Beta session")
+            item_b = QListWidgetItem("Alpha two")
             item_b.setData(Qt.ItemDataRole.UserRole, "sid-B")
-            item_c = QListWidgetItem("Gamma session")
+            item_c = QListWidgetItem("Beta session")
             item_c.setData(Qt.ItemDataRole.UserRole, "sid-C")
             widget._list_widget.addItem(item_a)
             widget._list_widget.addItem(item_b)
             widget._list_widget.addItem(item_c)
 
-            widget._list_widget.setCurrentRow(-1)
-            widget._onFindNextRequested("beta")
-            self.assertEqual(widget.currentRow(), 1)
-
-            widget._onFindPrevRequested("alpha")
+            widget._list_widget.setCurrentRow(0)
+            widget._onFindQueryEdited("alpha")
             self.assertEqual(widget.currentRow(), 0)
 
-            widget._list_widget.setCurrentRow(2)
-            widget._onFindNextRequested("beta")
+            widget._onFindNextRequested("alpha")
+            self.assertEqual(widget.currentRow(), 1)
+
+            widget._onFindNextRequested("alpha")
+            self.assertEqual(widget.currentRow(), 0)
+
+            widget._onFindPrevRequested("alpha")
             self.assertEqual(widget.currentRow(), 1)
         finally:
             widget.close()
+
+    def test_context_menu_contains_find_and_delete_actions(self):
+        """
+        Session list context menu exposes Find... and Delete actions.
+        """
+        widget = SessionListWidget(api=self._createApi())
+        try:
+            menu = widget._createListContextMenu()
+            action_texts = [action.text() for action in menu.actions()]
+            self.assertEqual(action_texts, ["Find...", "Delete"])
+            menu.close()
+        finally:
+            widget.close()
+
+    def test_delete_action_enabled_state_tracks_selection(self):
+        """
+        Delete action enablement matches delete button state.
+        """
+        widget = SessionListWidget(api=self._createApi())
+        try:
+            self.assertFalse(widget._delete_button.isEnabled())
+            self.assertFalse(widget._delete_action.isEnabled())
+
+            item = QListWidgetItem("Alpha session")
+            item.setData(Qt.ItemDataRole.UserRole, "sid-A")
+            widget._list_widget.addItem(item)
+            widget._list_widget.setCurrentRow(0)
+            self.application.processEvents()
+
+            self.assertTrue(widget._delete_button.isEnabled())
+            self.assertTrue(widget._delete_action.isEnabled())
+
+            widget._list_widget.setCurrentRow(-1)
+            self.application.processEvents()
+
+            self.assertFalse(widget._delete_button.isEnabled())
+            self.assertFalse(widget._delete_action.isEnabled())
+        finally:
+            widget.close()
+
