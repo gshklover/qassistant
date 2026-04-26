@@ -55,6 +55,13 @@ class AgentAPI(QObject):
         self._client.on("session.deleted", lambda event: self.sessionDeleted.emit(getattr(event, "sessionId", "")))
         self._client.on("session.updated", lambda event: self.sessionUpdated.emit(getattr(event, "sessionId", "")))
 
+    @property
+    def client(self) -> copilot.CopilotClient:
+        """
+        Get the underlying CopilotClient instance.
+        """
+        return self._client
+
     async def _ensure_client_started(self):
         """
         Ensure the shared Copilot client is started before using read-only API calls.
@@ -133,7 +140,8 @@ class AgentAPI(QObject):
                 **config
             ),
             shell=shell,
-            session_config=config
+            session_config=config,
+            resume_callback=self._client.resume_session
         )
 
     async def resume_session(
@@ -352,6 +360,7 @@ class Session(QObject):
         model: str = DEFAULT_MODEL,
         workspace_path: str = "",
         session_config: dict[str, Any] = None,
+        resume_callback = None,  # pointer to client.resume_session to allow session restart on workspace change
         parent: QObject = None
     ):
         """
@@ -364,6 +373,7 @@ class Session(QObject):
         self._model = model
         self._workspace_path = workspace_path or os.getcwd()
         self._usage = 0
+        self._resume_callback = resume_callback
         self._session.on(self._on_event)
 
     @property
@@ -503,12 +513,14 @@ class Session(QObject):
         Restart the current session, preserving the session id.
         Called when changing workspace directory.
         """
-        client = self._session._client  # FIXME: this is the JsonRPC client (not copilot.CopilotClient)
+        if self._resume_callback is None:
+            return
+
         session_id = self._session.session_id
 
         try:
             await self._session.disconnect()
-            new_session = await client.resume_session(
+            new_session = await self._resume_callback(
                 session_id=session_id,
                 working_directory=self._workspace_path,
                 model=self._model,
