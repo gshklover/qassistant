@@ -141,7 +141,9 @@ class AgentAPI(QObject):
             ),
             shell=shell,
             session_config=config,
-            resume_callback=self._client.resume_session
+            resume_callback=self._client.resume_session,
+            custom_agents=custom_agents,
+            agent=agent
         )
 
     async def resume_session(
@@ -361,6 +363,8 @@ class Session(QObject):
         workspace_path: str = "",
         session_config: dict[str, Any] = None,
         resume_callback = None,  # pointer to client.resume_session to allow session restart on workspace change
+        custom_agents: list[Any] | None = None,
+        agent: str | None = None,
         parent: QObject = None
     ):
         """
@@ -375,6 +379,8 @@ class Session(QObject):
         self._usage = 0
         self._resume_callback = resume_callback
         self._session.on(self._on_event)
+        self._custom_agents = custom_agents
+        self._agent = agent
 
     @property
     def session(self) -> copilot.CopilotSession:
@@ -396,6 +402,20 @@ class Session(QObject):
         Get the current model name.
         """
         return self._model
+
+    @property
+    def custom_agents(self) -> list[Any] | None:
+        """
+        Get the list of available custom agents.
+        """
+        return self._custom_agents
+
+    @property
+    def agent(self) -> str | None:
+        """
+        Get the currently selected custom agent name, or None if no agent selected.
+        """
+        return self._agent
 
     @property
     def running(self) -> bool:
