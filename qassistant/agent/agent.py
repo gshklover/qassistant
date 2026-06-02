@@ -9,8 +9,6 @@ import traceback
 
 import copilot
 from copilot.generated.session_events import SessionEventType
-import dataclasses
-import functools
 import httpx
 import inspect
 import json
@@ -21,6 +19,8 @@ import os
 import pathlib
 from PySide6.QtCore import QObject, Signal
 from typing import Any, Callable, Sequence
+
+from pydantic import create_model, BaseModel
 
 from .tools.pythonshell import PythonShell
 from .common import Message, Role, TextContent
@@ -292,26 +292,36 @@ _EVENT_SIGNAL_BY_METHOD = {
 }
 
 
-def as_tool(func: Callable, **kwargs) -> Callable:
+def as_tool(func: Callable, name: str = None, description: str = None, **kwargs) -> copilot.tools.Tool:
     """
-    Decorator to mark a function as a tool for the agent.
+    Copilot expects single argument tools, this wrapper generates copilot.toolsTool from a typed function.
     """
+    if name is None:
+        name = func.__name__
+    if description is None:
+        description = func.__doc__
+
     sig = inspect.signature(func)
 
-    ArgType = dataclasses.make_dataclass(
-        cls_name="Args",
-        fields=[(param.name, param.annotation) for param in sig.parameters.values()],
-    )
+    fields = {}
+    for param in sig.parameters.values():
+        annotation = param.annotation if param.annotation is not inspect.Signature.empty else Any
+        default = param.default if param.default is not inspect.Signature.empty else ...
+        fields[param.name] = (annotation, default)
 
-    @functools.wraps(func)
-    def wrapper(arg):
-        return func(**arg.to_dict())
+    ParamType = create_model("ParamType", __base__=BaseModel, **fields)
 
-    wrapper.__name__ = kwargs.get("name", func.__name__)
+    def wrapper(params: ParamType):
+        """
+        Wraps the original function with single-argument, typed schema
+        """
+        return func(**params.model_dump())
+
+    wrapper.__name__ = name
     wrapper.__annotations__.setdefault("return", func.__annotations__.get("return", None))
-    wrapper.__annotations__["arg"] = ArgType
+    wrapper.__doc__ = func.__doc__
 
-    return copilot.define_tool(**kwargs)(wrapper)
+    return copilot.define_tool(name=name, description=description, params_type=ParamType, handler=wrapper, **kwargs)
 
 
 class Session(QObject):

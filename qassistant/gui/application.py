@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QToolBar,
     QVBoxLayout,
-    QWidget,
+    QWidget, QStyleFactory,
 )
 
 from .utils import wait_cursor
@@ -59,6 +59,7 @@ class SessionWidget(QWidget):
         self._session.toolExecutionStart.connect(self._onToolExecutionStart)
         self._session.toolExecutionComplete.connect(self._onToolExecutionComplete)
         self._session.assistantMessageDelta.connect(self._onAssistantMessageDelta)
+        self._session.assistantReasoningDelta.connect(self._onAssistantReasoningDelta)
         self._session.assistantMessage.connect(self._onAssistantMessage)
         self._session.sessionIdle.connect(self._onSessionIdle)
         self._session.sessionError.connect(self._onSessionErrorEvent)
@@ -170,6 +171,13 @@ class SessionWidget(QWidget):
         self._has_delta_content = True
         response_text.text += delta
         self._chat_widget.updateMessage(self._response_message)
+
+    def _onAssistantReasoningDelta(self, delta_content: str | None, reasoning_id: str | None, interaction_id: str | None):
+        """
+        Called when the model generates more reasoning content
+        """
+        if delta_content:
+            self._onMessageDelta(delta_content)
 
     def _onAssistantMessageDelta(self, delta_content: str | None, message_id: str | None, interaction_id: str | None):
         """
@@ -1082,6 +1090,8 @@ class Application(QApplication):
         self.setApplicationName("qassistant")
         self.setDesktopFileName("qassistant")
         self.setApplicationVersion(__version__)
+        self.setStyle(QStyleFactory.create("fusion"))
+        # print(QStyleFactory.keys())
         self.setWindowIcon(qtawesome.icon("mdi6.comment-multiple-outline", size=64))
 
         self._api = AgentAPI()
